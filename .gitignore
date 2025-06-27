@@ -1,0 +1,28 @@
+# Bỏ qua thư mục cấu hình của CLion
+.idea/
+
+# Bỏ qua thư mục build mặc định của CLion
+cmake-build-*/
+
+# File biên dịch
+*.o
+*.obj
+*.so
+*.a
+*.out
+*.exe
+
+# File tạm của CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# File log hoặc tạm khác
+*.log
+*.tmp
+*~
+*.swp
+
+# VSCode (nếu bạn có mở bằng VSCode)
+.vscode/
