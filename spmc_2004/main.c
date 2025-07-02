@@ -1,118 +1,67 @@
+#include "queue.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdatomic.h>
-#include <pthread.h>
 
-#define MAX_ROWS 1000
-#define MAX_COLS 1000
-#define EMPTY -1
-#define TAKEN -2
-#define N_DEQUEUERS 4
-
-typedef struct {
-    atomic_int value;
-} SwapObject;
-
-typedef struct {
-    atomic_int counter;
-} FetchAndIncrement;
-
-// Global shared data
-SwapObject ITEMS[MAX_ROWS][MAX_COLS];
-FetchAndIncrement HEAD[MAX_ROWS];
-atomic_int ROW = 0;
-
-// Enqueuer state
-int tail = 0;
-int enq_row = 0;
-
-// Helper function for Swap (atomic exchange)
-int swap(atomic_int *loc, int new_val) {
-    return atomic_exchange(loc, new_val);
-}
-
-// Helper function for Fetch&Increment
-int fetch_and_increment(atomic_int *counter) {
-    return atomic_fetch_add(counter, 1);
-}
-
-// Enqueue operation (run by one thread)
-void Enqueue(int x) {
-    int val = swap(&ITEMS[enq_row][tail].value, x);
-    if (val == TAKEN) {
-        enq_row++;
-        tail = 0;
-        swap(&ITEMS[enq_row][tail].value, x);
-        atomic_store(&ROW, enq_row);
+/**
+ * Main program to demonstrate the single-enqueuer wait-free queue using MPI one-sided communication.
+ * Rank 0 enqueues values, while other ranks dequeue values.
+ */
+int main(int argc, char *argv[]) {
+    int err = MPI_Init(&argc, &argv);
+    if (err != MPI_SUCCESS) {
+        fprintf(stderr, "MPI initialization failed\n");
+        return 1;
     }
-    tail++;
-}
 
-// Dequeue operation (run by many threads)
-int Dequeue() {
-    int deq_row = atomic_load(&ROW);
-    int head = fetch_and_increment(&HEAD[deq_row].counter);
-    int val = swap(&ITEMS[deq_row][head].value, TAKEN);
-    if (val == EMPTY) {
-        return -999;  // ε: nothing to return
-    } else {
-        return val;
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    if (size < 2) {
+        fprintf(stderr, "At least two processes are required\n");
+        MPI_Finalize();
+        return 1;
     }
-}
 
-// Initialization
-void init() {
-    for (int i = 0; i < MAX_ROWS; ++i) {
-        atomic_init(&HEAD[i].counter, 0);
-        for (int j = 0; j < MAX_COLS; ++j) {
-            atomic_init(&ITEMS[i][j].value, EMPTY);
+    // Shared data structures
+    int *head = NULL, *items = NULL, row = 0;
+    MPI_Win win_head, win_items, win_row;
+
+    // Initialize queue
+    err = queue_initialize(rank, size, &head, &items, &row, &win_head, &win_items, &win_row);
+    if (err != MPI_SUCCESS) {
+        fprintf(stderr, "Queue initialization failed at rank %d\n", rank);
+        MPI_Finalize();
+        return 1;
+    }
+
+    // Enqueuer (rank 0) enqueues values 1, 2, 3
+    int eng_row = 0, tail = 0;
+    if (rank == 0) {
+        int values[] = {1, 2, 3};
+        for (int i = 0; i < 3; i++) {
+            err = enqueue(values[i], rank, head, items, &row, win_head, win_items, win_row, &eng_row, &tail);
+            if (err != MPI_SUCCESS) {
+                fprintf(stderr, "Enqueue failed for value %d at rank %d\n", values[i], rank);
+            } else {
+                printf("Rank %d enqueued: %d\n", rank, values[i]);
+            }
         }
     }
-    atomic_init(&ROW, 0);
-}
 
-// Example usage
-void* dequeuer_thread(void* arg) {
-    int id = *(int*)arg;
-    for (int i = 0; i < 5; ++i) {
-        int val = Dequeue();
-        if (val != -999)
-            printf("Dequeuer %d got value %d\n", id, val);
-    }
-    return NULL;
-}
+    // Barrier to ensure enqueues are done
+    MPI_Barrier(MPI_COMM_WORLD);
 
-void* enqueuer_thread(void* arg) {
-    for (int i = 1; i <= 10; ++i) {
-        Enqueue(i);
-        printf("Enqueued %d\n", i);
-    }
-    return NULL;
-}
-
-int main() {
-    init();
-
-    // Tạo enqueuer thread
-    pthread_t enq_thread;
-    pthread_create(&enq_thread, NULL, enqueuer_thread, NULL);
-
-    // Tạo các dequeuer threads
-    pthread_t threads[N_DEQUEUERS];
-    int ids[N_DEQUEUERS];
-    for (int i = 0; i < N_DEQUEUERS; ++i) {
-        ids[i] = i + 1;
-        pthread_create(&threads[i], NULL, dequeuer_thread, &ids[i]);
+    // Dequeuers try to dequeue
+    int result = dequeue(rank, head, items, &row, win_head, win_items, win_row);
+    if (result != -1) {
+        printf("Rank %d dequeued: %d\n", rank, result);
+    } else {
+        printf("Rank %d found empty queue\n", rank);
     }
 
-    // Chờ thread enqueue xong
-    pthread_join(enq_thread, NULL);
-
-    // Chờ các thread dequeue xong
-    for (int i = 0; i < N_DEQUEUERS; ++i) {
-        pthread_join(threads[i], NULL);
-    }
-
+    // Clean up
+    queue_finalize(rank, head, items, win_head, win_items, win_row);
+    MPI_Finalize();
     return 0;
 }
-
