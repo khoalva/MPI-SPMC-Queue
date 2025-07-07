@@ -23,6 +23,6 @@ Makefile
 *.tmp
 *~
 *.swp
-
+*.csv
 # VSCode (nếu bạn có mở bằng VSCode)
 .vscode/

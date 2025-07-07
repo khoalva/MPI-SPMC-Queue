@@ -17,37 +17,54 @@ int main(int argc, char *argv[]) {
     mpi_print_info(&queue.mpi_ctx);
     spmc_queue_print_stats(&queue);
     
-    // Enqueuer (rank 0) enqueues some values
+    // Start concurrent producer/consumer operation
+    printf("\n=== Concurrent Producer/Consumer Operation ===\n");
+    
     if (spmc_queue_is_enqueuer(&queue)) {
-        printf("\n=== Enqueuing Phase ===\n");
-        int values[] = {100, 200, 300, 400, 500, 600, 700, 800};
+        // Producer: Continuously enqueue items while consumers work
+        printf("Rank %d: Starting as PRODUCER\n", mpi_get_rank(&queue.mpi_ctx));
+        int values[] = {100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 
+                        101, 201, 301, 401, 501, 601, 701, 801, 901, 950};
         int num_values = sizeof(values) / sizeof(values[0]);
         
         for (int i = 0; i < num_values; i++) {
             MPI_TRY(spmc_queue_enqueue(&queue, values[i]));
-            // Small delay to simulate work
-            usleep(50000); // 50ms
+            // Small delay to allow consumers to work concurrently
+            usleep(25000); // 25ms - faster than consumers to build up queue
         }
         
-        printf("Enqueuing completed.\n");
-    }
-    
-    // Synchronize all processes
-    MPI_TRY(mpi_barrier(queue.mpi_ctx.comm));
-    
-    // All processes try to dequeue
-    printf("\n=== Dequeuing Phase ===\n");
-    for (int attempt = 0; attempt < 5; attempt++) {
-        int value = spmc_queue_dequeue(&queue);
-        if (value == -1) {
-            printf("Rank %d: No more items available\n", mpi_get_rank(&queue.mpi_ctx));
-            break;
+        printf("Rank %d: Producer completed enqueuing %d items\n", 
+               mpi_get_rank(&queue.mpi_ctx), num_values);
+        
+        // Producer only produces - waiting for consumers to finish
+        printf("Rank %d: Producer finished - waiting for consumers to complete work\n", 
+               mpi_get_rank(&queue.mpi_ctx));
+        
+    } else {
+        // Consumer: Continuously try to dequeue items
+        printf("Rank %d: Starting as CONSUMER\n", mpi_get_rank(&queue.mpi_ctx));
+        
+        int items_consumed = 0;
+        int max_attempts = 50; // More attempts to catch items as they're produced
+        
+        for (int attempt = 0; attempt < max_attempts; attempt++) {
+            int value = spmc_queue_dequeue(&queue);
+            if (value != -1) {
+                items_consumed++;
+                // Shorter delay when successfully consuming
+                usleep(40000); // 40ms
+            } else {
+                // Small delay when queue is empty, then try again
+                usleep(20000); // 20ms - quick retry
+            }
         }
-        // Small delay between dequeue attempts
-        usleep(30000); // 30ms
+        
+        printf("Rank %d: Consumer finished, consumed %d items\n", 
+               mpi_get_rank(&queue.mpi_ctx), items_consumed);
     }
     
-    // Final synchronization
+    // Final synchronization to ensure all processes finish
+    printf("Rank %d: Waiting for all processes to complete...\n", mpi_get_rank(&queue.mpi_ctx));
     MPI_TRY(mpi_barrier(queue.mpi_ctx.comm));
     
     // Print final statistics
