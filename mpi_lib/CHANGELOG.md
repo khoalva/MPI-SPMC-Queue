@@ -5,21 +5,30 @@ All notable changes to the MPI Wrapper Library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.1] - 2025-07-06
+## [1.0.1] - 2025-07-07
+
+### Changed
+- **Complete API Migration**: Successfully migrated all examples and projects to use the unified `mpi_lib` API
+- **Updated Documentation**: Completely updated README.md to reflect the new unified API (removed all `mpi_easy` references)
+- **SPMC Queue Integration**: Fully integrated SPMC queue project with the new library
+- **Examples Modernization**: Updated `one_sided.c` and `collective.c` examples to use new API
 
 ### Removed
 - **Legacy mpi_easy API**: Removed the old `mpi_easy.h` and `mpi_easy.c` files to clean up the codebase
 - **Deprecated examples**: Removed examples that were using the old API
 - **Duplicate functionality**: Eliminated code duplication between old and new APIs
-
-### Changed
-- **Unified API**: All functionality now uses the single `mpi_lib.h` interface
-- **Cleaner codebase**: Simplified project structure with single consistent API
-- **Updated examples**: All remaining examples use the new `mpi_lib.h` API
+- **Wrapper implementations**: Removed all local wrapper implementations from SPMC project
 
 ### Fixed
 - **Build issues**: Resolved compilation errors from legacy code references
 - **Library conflicts**: Eliminated potential conflicts from multiple API versions
+- **Documentation consistency**: All documentation now consistently references the new API
+
+### Verified
+- ✅ **100% Test Pass Rate**: All 84 tests in the comprehensive test suite pass
+- ✅ **Examples Working**: All examples compile and run correctly with new API
+- ✅ **SPMC Queue**: Successfully tested with multiple process counts
+- ✅ **No Legacy References**: Confirmed no remaining `mpi_easy` references in codebase
 
 ---
 
