@@ -196,6 +196,61 @@ Memory Usage:
 ================================================================
 ```
 
+## Results Organization
+
+### 📁 **Directory Structure**
+
+Results are automatically organized by SPMC implementation type:
+
+```
+benchmark/results/
+├── spmc_2004/          # Results for SPMC 2004 implementation
+│   ├── spmc_2004_quick_3procs_20250107_140530.csv
+│   ├── spmc_2004_throughput_4procs_20250107_140545.csv
+│   └── spmc_2004_scalability_3procs_20250107_140600.csv
+├── spmc_2005/          # Results for SPMC 2005 implementation (if exists)
+│   ├── spmc_2005_quick_3procs_20250107_141030.csv
+│   └── spmc_2005_throughput_4procs_20250107_141045.csv
+└── other_spmc/         # Results for other implementations
+    └── other_spmc_quick_3procs_20250107_142030.csv
+```
+
+### 🔧 **Result Analysis Tools**
+
+Use the analysis script to manage and compare results:
+
+```bash
+# List all available results by SPMC type
+./analyze_results.sh list
+
+# Show summary of all results
+./analyze_results.sh summary
+
+# Show detailed results for specific SPMC type
+./analyze_results.sh details spmc_2004
+
+# Compare results between SPMC types
+./analyze_results.sh compare
+
+# Show latest results for each SPMC type
+./analyze_results.sh latest
+
+# Clean old result files (keep latest 10 per type)
+./analyze_results.sh clean
+```
+
+### 🏷️ **File Naming Convention**
+
+Result files follow this pattern:
+```
+{spmc_type}_{test_type}_{num_processes}procs_{timestamp}.csv
+```
+
+Examples:
+- `spmc_2004_quick_3procs_20250107_140530.csv`
+- `spmc_2005_throughput_4procs_20250107_141045.csv`
+- `custom_implementation_scalability_6procs_20250107_142030.csv`
+
 ## File Structure
 
 ```

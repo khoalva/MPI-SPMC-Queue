@@ -3,6 +3,7 @@
 #include <math.h>
 #include <sys/resource.h>
 #include <errno.h>
+#include <time.h>
 
 /**
  * Benchmark Library Implementation for SPMC Queue Performance Testing
@@ -10,7 +11,7 @@
 
 // Internal helper functions
 static void benchmark_init_stats(process_stats_t *stats, int rank);
-static double benchmark_calculate_percentile(double *samples, int count, double percentile);
+// static double benchmark_calculate_percentile(double *samples, int count, double percentile);
 static void benchmark_print_separator(void);
 
 /**
@@ -314,18 +315,130 @@ int benchmark_export_csv(const benchmark_ctx_t *ctx, const char *filename) {
     }
     
     // Write CSV header
-    fprintf(fp, "test_name,mpi_size,total_time_sec,items_produced,items_consumed,");
-    fprintf(fp, "throughput_items_per_sec,avg_enqueue_latency_us,max_enqueue_latency_us,");
-    fprintf(fp, "avg_dequeue_latency_us,max_dequeue_latency_us,memory_peak_kb,load_balance_score\\n");
+    fprintf(fp, "Test_Name,MPI_Size,Total_Time_Sec,Items_Produced,Items_Consumed,");
+    fprintf(fp, "Throughput_Items_Per_Sec,Avg_Enqueue_Latency_Us,Max_Enqueue_Latency_Us,");
+    fprintf(fp, "Avg_Dequeue_Latency_Us,Max_Dequeue_Latency_Us,Memory_Peak_KB,Load_Balance_Score\n");
     
-    // Write data
-    fprintf(fp, "\\\"%s\\\",%d,%.3f,%ld,%ld,%.2f,%.2f,%.2f,%.2f,%.2f,%ld,%d\\n",
+    // Write data with better formatting
+    fprintf(fp, "\"%s\",%d,%.3f,%ld,%ld,%.2f,%.2f,%.2f,%.2f,%.2f,%ld,%d\n",
             ctx->config.test_name, ctx->mpi_size, ctx->results.total_time_sec,
             ctx->results.total_items_produced, ctx->results.total_items_consumed,
             ctx->results.throughput_items_per_sec, ctx->results.avg_enqueue_latency_us,
             ctx->results.max_enqueue_latency_us, ctx->results.avg_dequeue_latency_us,
             ctx->results.max_dequeue_latency_us, ctx->results.memory_peak_kb,
             ctx->results.load_balance_score);
+    
+    fclose(fp);
+    return 0;
+}
+
+/**
+ * Export detailed results to readable CSV format with summary
+ */
+int benchmark_export_csv_detailed(const benchmark_ctx_t *ctx, const char *filename) {
+    if (!ctx || !filename || ctx->mpi_rank != 0) return -1;
+    
+    FILE *fp = fopen(filename, "w");
+    if (!fp) {
+        perror("Failed to open detailed CSV file");
+        return -1;
+    }
+    
+    // Write header with description
+    fprintf(fp, "# SPMC Queue Benchmark Results - Detailed Report\n");
+    fprintf(fp, "# Generated on: %s", ctime(&(time_t){time(NULL)}));
+    fprintf(fp, "# Test: %s\n", ctx->config.test_name);
+    fprintf(fp, "# MPI Processes: %d\n", ctx->mpi_size);
+    fprintf(fp, "# Items to Process: %d\n", ctx->config.num_items);
+    fprintf(fp, "#\n");
+    
+    // Summary section
+    fprintf(fp, "\n=== SUMMARY ===\n");
+    fprintf(fp, "Metric,Value,Unit\n");
+    fprintf(fp, "Test Name,\"%s\",\n", ctx->config.test_name);
+    fprintf(fp, "MPI Processes,%d,processes\n", ctx->mpi_size);
+    fprintf(fp, "Total Time,%.3f,seconds\n", ctx->results.total_time_sec);
+    fprintf(fp, "Items Produced,%ld,items\n", ctx->results.total_items_produced);
+    fprintf(fp, "Items Consumed,%ld,items\n", ctx->results.total_items_consumed);
+    fprintf(fp, "Total Throughput,%.2f,items/sec\n", ctx->results.throughput_items_per_sec);
+    fprintf(fp, "Avg Enqueue Latency,%.2f,microseconds\n", ctx->results.avg_enqueue_latency_us);
+    fprintf(fp, "Max Enqueue Latency,%.2f,microseconds\n", ctx->results.max_enqueue_latency_us);
+    fprintf(fp, "Avg Dequeue Latency,%.2f,microseconds\n", ctx->results.avg_dequeue_latency_us);
+    fprintf(fp, "Max Dequeue Latency,%.2f,microseconds\n", ctx->results.max_dequeue_latency_us);
+    fprintf(fp, "Memory Peak,%ld,KB\n", ctx->results.memory_peak_kb);
+    fprintf(fp, "Load Balance Score,%d,percent\n", ctx->results.load_balance_score);
+    
+    // Performance analysis section
+    fprintf(fp, "\n=== PERFORMANCE ANALYSIS ===\n");
+    fprintf(fp, "Analysis,Value,Interpretation\n");
+    
+    // Throughput analysis
+    if (ctx->results.throughput_items_per_sec > 5000) {
+        fprintf(fp, "Throughput,%.2f items/sec,Excellent\n", ctx->results.throughput_items_per_sec);
+    } else if (ctx->results.throughput_items_per_sec > 2000) {
+        fprintf(fp, "Throughput,%.2f items/sec,Good\n", ctx->results.throughput_items_per_sec);
+    } else if (ctx->results.throughput_items_per_sec > 1000) {
+        fprintf(fp, "Throughput,%.2f items/sec,Average\n", ctx->results.throughput_items_per_sec);
+    } else {
+        fprintf(fp, "Throughput,%.2f items/sec,Needs Improvement\n", ctx->results.throughput_items_per_sec);
+    }
+    
+    // Latency analysis
+    if (ctx->results.avg_enqueue_latency_us < 10) {
+        fprintf(fp, "Enqueue Latency,%.2f μs,Excellent\n", ctx->results.avg_enqueue_latency_us);
+    } else if (ctx->results.avg_enqueue_latency_us < 50) {
+        fprintf(fp, "Enqueue Latency,%.2f μs,Good\n", ctx->results.avg_enqueue_latency_us);
+    } else if (ctx->results.avg_enqueue_latency_us < 100) {
+        fprintf(fp, "Enqueue Latency,%.2f μs,Average\n", ctx->results.avg_enqueue_latency_us);
+    } else {
+        fprintf(fp, "Enqueue Latency,%.2f μs,High\n", ctx->results.avg_enqueue_latency_us);
+    }
+    
+    // Load balance analysis
+    if (ctx->results.load_balance_score >= 95) {
+        fprintf(fp, "Load Balance,%d%%,Excellent Distribution\n", ctx->results.load_balance_score);
+    } else if (ctx->results.load_balance_score >= 85) {
+        fprintf(fp, "Load Balance,%d%%,Good Distribution\n", ctx->results.load_balance_score);
+    } else if (ctx->results.load_balance_score >= 70) {
+        fprintf(fp, "Load Balance,%d%%,Moderate Imbalance\n", ctx->results.load_balance_score);
+    } else {
+        fprintf(fp, "Load Balance,%d%%,Poor Distribution\n", ctx->results.load_balance_score);
+    }
+    
+    // Configuration details
+    fprintf(fp, "\n=== CONFIGURATION ===\n");
+    fprintf(fp, "Parameter,Value,Unit\n");
+    fprintf(fp, "Items to Process,%d,items\n", ctx->config.num_items);
+    fprintf(fp, "Producers,%d,processes\n", ctx->config.num_producers);
+    fprintf(fp, "Consumers,%d,processes\n", ctx->config.num_consumers);
+    fprintf(fp, "Producer Delay,%d,microseconds\n", ctx->config.producer_delay_us);
+    fprintf(fp, "Consumer Delay,%d,microseconds\n", ctx->config.consumer_delay_us);
+    fprintf(fp, "Warmup Items,%d,items\n", ctx->config.warmup_items);
+    fprintf(fp, "Max Duration,%d,seconds\n", ctx->config.test_duration_sec);
+    fprintf(fp, "Latency Tracking,%s,\n", ctx->config.enable_latency_tracking ? "Enabled" : "Disabled");
+    fprintf(fp, "Memory Tracking,%s,\n", ctx->config.enable_memory_tracking ? "Enabled" : "Disabled");
+    
+    // Recommendations
+    fprintf(fp, "\n=== RECOMMENDATIONS ===\n");
+    fprintf(fp, "Area,Recommendation,Reason\n");
+    
+    if (ctx->results.throughput_items_per_sec < 2000) {
+        fprintf(fp, "Performance,Consider optimizing queue operations,Low throughput detected\n");
+    }
+    
+    if (ctx->results.avg_enqueue_latency_us > 100) {
+        fprintf(fp, "Latency,Review enqueue implementation,High latency detected\n");
+    }
+    
+    if (ctx->results.load_balance_score < 85) {
+        fprintf(fp, "Load Balancing,Investigate consumer distribution,Uneven workload detected\n");
+    }
+    
+    if (ctx->mpi_size == 2) {
+        fprintf(fp, "Scalability,Try with more processes,Limited parallelism with 2 processes\n");
+    }
+    
+    fprintf(fp, "\n# End of detailed report\n");
     
     fclose(fp);
     return 0;

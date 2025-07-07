@@ -1,28 +1,64 @@
-# Bỏ qua thư mục cấu hình của CLion
+# IDE/Editor files
 .idea/
+.vscode/
+.vs/
+*.swp
+*.swo
+*~
 
-# Bỏ qua thư mục build mặc định của CLion
+# Build directories and CMake files
 cmake-build-*/
-
-# File biên dịch
-*.o
-*.obj
-*.so
-*.a
-*.out
-*.exe
-
-# File tạm của CMake
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
-Makefile
+build/
+obj/
 
-# File log hoặc tạm khác
+# Compiled Object files
+*.o
+*.obj
+
+# Executables
+*.exe
+*.out
+queue
+queue_spmc
+spmc_benchmark
+
+# Libraries
+*.a
+*.so
+*.so.*
+*.lib
+*.dll
+
+# Generated Makefiles (keep source Makefiles)
+# Makefile
+
+# Temporary and log files
 *.log
 *.tmp
+*.temp
 *~
-*.swp
+
+# Benchmark results (they can be regenerated)
+benchmark/results/*.csv
+benchmark/logs/*.log
 *.csv
-# VSCode (nếu bạn có mở bằng VSCode)
-.vscode/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Backup files
+*.bak
+*.backup
+
+# MPI temporary files
+core.*
+*.core
+
+# Custom ignore for this project
+/benchmark/examples/spmc_benchmark
+/benchmark/lib/

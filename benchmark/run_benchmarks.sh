@@ -63,6 +63,8 @@ print_usage() {
     echo "  -v, --verbose        Enable verbose output"
     echo "  --no-build           Skip build step"
     echo "  --export-csv         Export results to CSV"
+    echo "  --max-tests NUM      Maximum number of tests for suite (default: 6)"
+    echo "  --quick-suite        Run only essential tests (2-3 tests)"
     echo ""
     echo "Examples:"
     echo "  $0 quick"
@@ -79,6 +81,8 @@ OUTPUT_DIR=""
 VERBOSE=false
 NO_BUILD=false
 EXPORT_CSV=false
+MAX_TESTS=6
+QUICK_SUITE=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -107,6 +111,14 @@ while [[ $# -gt 0 ]]; do
             EXPORT_CSV=true
             shift
             ;;
+        --max-tests)
+            MAX_TESTS="$2"
+            shift 2
+            ;;
+        --quick-suite)
+            QUICK_SUITE=true
+            shift
+            ;;
         quick|throughput|latency|scalability|stress|suite|all)
             TEST_TYPE="$1"
             shift
@@ -127,14 +139,72 @@ fi
 # Create output directories
 mkdir -p "$OUTPUT_DIR" "$LOG_DIR"
 
+# Function to detect available SPMC types
+detect_spmc_types() {
+    local workspace_dir="${BENCHMARK_DIR}/.."
+    local spmc_types=()
+    
+    # Look for directories that contain SPMC implementations
+    for dir in "${workspace_dir}"/spmc_*/; do
+        if [[ -d "$dir" ]]; then
+            local dirname=$(basename "$dir")
+            spmc_types+=("$dirname")
+        fi
+    done
+    
+    # Also check for other common SPMC directory patterns
+    for dir in "${workspace_dir}"/spmc*/; do
+        if [[ -d "$dir" ]]; then
+            local dirname=$(basename "$dir")
+            if [[ "$dirname" != "spmc" && "$dirname" != spmc_* ]]; then
+                spmc_types+=("$dirname")
+            fi
+        fi
+    done
+    
+    echo "${spmc_types[@]}"
+}
+
+# Function to select SPMC type
+select_spmc_type() {
+    local available_types=($(detect_spmc_types))
+    
+    if [[ ${#available_types[@]} -eq 0 ]]; then
+        log_error "No SPMC implementations found in workspace"
+        exit 1
+    elif [[ ${#available_types[@]} -eq 1 ]]; then
+        echo "${available_types[0]}"
+    else
+        log_info "Multiple SPMC implementations found:"
+        for i in "${!available_types[@]}"; do
+            echo "  $((i+1)). ${available_types[$i]}"
+        done
+        
+        while true; do
+            read -p "Select SPMC type (1-${#available_types[@]}): " choice
+            if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#available_types[@]} ]]; then
+                echo "${available_types[$((choice-1))]}"
+                break
+            else
+                log_error "Invalid selection. Please choose 1-${#available_types[@]}"
+            fi
+        done
+    fi
+}
+
 # Function to run a single benchmark
 run_benchmark() {
     local test_type="$1"
     local num_procs="$2"
+    local spmc_type="$3"
     local timestamp=$(date +"%Y%m%d_%H%M%S")
-    local log_file="${LOG_DIR}/benchmark_${test_type}_${num_procs}procs_${timestamp}.log"
+    local log_file="${LOG_DIR}/benchmark_${test_type}_${spmc_type}_${num_procs}procs_${timestamp}.log"
     
-    log_info "Running $test_type benchmark with $num_procs processes..."
+    # Create subdirectory for this SPMC type
+    local spmc_results_dir="${OUTPUT_DIR}/${spmc_type}"
+    mkdir -p "$spmc_results_dir"
+    
+    log_info "Running $test_type benchmark with $num_procs processes for $spmc_type..."
     
     # Build MPI command
     local mpi_cmd="mpirun"
@@ -159,13 +229,29 @@ run_benchmark() {
     if [[ $exit_code -eq 0 ]]; then
         log_success "$test_type benchmark completed successfully"
         
-        # Move CSV results if they exist
-        if [[ "$EXPORT_CSV" == "true" ]]; then
-            local csv_file="benchmark_${test_type}_${num_procs}procs.csv"
-            if [[ -f "${BENCHMARK_DIR}/examples/$csv_file" ]]; then
-                mv "${BENCHMARK_DIR}/examples/$csv_file" "$OUTPUT_DIR/"
-                log_info "Results exported to: $OUTPUT_DIR/$csv_file"
-            fi
+        # Always try to move CSV results if they exist (regardless of EXPORT_CSV flag)
+        local csv_file="benchmark_${test_type}_${num_procs}procs.csv"
+        local detailed_csv_file="benchmark_${test_type}_${num_procs}procs_detailed.csv"
+        local new_csv_name="${spmc_type}_${test_type}_${num_procs}procs_${timestamp}.csv"
+        local new_detailed_csv_name="${spmc_type}_${test_type}_${num_procs}procs_detailed_${timestamp}.csv"
+        
+        # Check if CSV file exists in benchmark directory (most likely location)
+        if [[ -f "${BENCHMARK_DIR}/$csv_file" ]]; then
+            mv "${BENCHMARK_DIR}/$csv_file" "$spmc_results_dir/$new_csv_name"
+            log_info "Results moved to: $spmc_results_dir/$new_csv_name"
+        # Also check examples directory (in case it's created there)
+        elif [[ -f "${BENCHMARK_DIR}/examples/$csv_file" ]]; then
+            mv "${BENCHMARK_DIR}/examples/$csv_file" "$spmc_results_dir/$new_csv_name"
+            log_info "Results moved from examples to: $spmc_results_dir/$new_csv_name"
+        fi
+        
+        # Handle detailed CSV file
+        if [[ -f "${BENCHMARK_DIR}/$detailed_csv_file" ]]; then
+            mv "${BENCHMARK_DIR}/$detailed_csv_file" "$spmc_results_dir/$new_detailed_csv_name"
+            log_info "Detailed results moved to: $spmc_results_dir/$new_detailed_csv_name"
+        elif [[ -f "${BENCHMARK_DIR}/examples/$detailed_csv_file" ]]; then
+            mv "${BENCHMARK_DIR}/examples/$detailed_csv_file" "$spmc_results_dir/$new_detailed_csv_name"
+            log_info "Detailed results moved from examples to: $spmc_results_dir/$new_detailed_csv_name"
         fi
     else
         log_error "$test_type benchmark failed (exit code: $exit_code)"
@@ -179,23 +265,52 @@ run_benchmark_suite() {
     log_info "Running complete benchmark suite..."
     print_separator
     
-    local tests=("quick" "throughput" "latency")
-    local process_counts=(3 4 6)
+    # Reduced test set to prevent verbose overload
+    local tests=("quick" "throughput")
+    local process_counts=(3 4)
+    
+    local test_count=0
+    local max_tests=$MAX_TESTS
+    
+    # Use reduced test set for quick suite or verbose mode
+    if [[ "$QUICK_SUITE" == "true" ]] || [[ "$VERBOSE" == "true" ]]; then
+        local tests=("quick")
+        local process_counts=(3)
+        max_tests=2
+        log_info "Using quick suite mode (limited tests to prevent overload)"
+    else
+        # Reduced test set to prevent verbose overload
+        local tests=("quick" "throughput")
+        local process_counts=(3 4)
+    fi
     
     for test in "${tests[@]}"; do
         for procs in "${process_counts[@]}"; do
-            run_benchmark "$test" "$procs"
+            if [[ $test_count -ge $max_tests ]]; then
+                log_warning "Reached maximum test limit ($max_tests) to prevent verbose overload"
+                break 2
+            fi
+            
+            log_info "Running test $((test_count + 1))/$max_tests: $test with $procs processes"
+            run_benchmark "$test" "$procs" "$1"
+            test_count=$((test_count + 1))
             echo ""
+            
+            # Add small delay between tests to prevent system overload
+            if [[ "$VERBOSE" == "true" ]]; then
+                sleep 2
+            fi
         done
     done
     
-    # Run scalability test with multiple process counts
-    log_info "Running scalability analysis..."
-    for procs in 3 4 5 6 8; do
-        run_benchmark "scalability" "$procs"
-    done
+    # Run one scalability test only
+    if [[ $test_count -lt $max_tests ]]; then
+        log_info "Running scalability test..."
+        run_benchmark "scalability" "3" "$1"
+        test_count=$((test_count + 1))
+    fi
     
-    log_success "Benchmark suite completed!"
+    log_success "Benchmark suite completed! ($test_count tests executed)"
 }
 
 # Main execution
@@ -203,6 +318,11 @@ main() {
     print_separator
     log_info "SPMC Queue Benchmark Runner"
     print_separator
+    
+    # Detect and select SPMC type
+    local spmc_type=$(select_spmc_type)
+    log_info "Selected SPMC implementation: $spmc_type"
+    echo ""
     
     # Build benchmark if needed
     if [[ "$NO_BUILD" != "true" ]]; then
@@ -227,23 +347,25 @@ main() {
     # Create output directory
     mkdir -p "$OUTPUT_DIR"
     log_info "Results will be saved to: $OUTPUT_DIR"
+    log_info "Results will be organized by SPMC type in subdirectories"
     echo ""
     
     # Run requested benchmark(s)
     case "$TEST_TYPE" in
         suite|all)
-            run_benchmark_suite
+            run_benchmark_suite "$spmc_type"
             ;;
         *)
-            run_benchmark "$TEST_TYPE" "$NUM_PROCESSES"
+            run_benchmark "$TEST_TYPE" "$NUM_PROCESSES" "$spmc_type"
             ;;
     esac
     
     print_separator
     log_success "All benchmarks completed successfully!"
     log_info "Log files saved to: $LOG_DIR"
+    log_info "CSV results organized by SPMC type in: $OUTPUT_DIR/$spmc_type"
     if [[ "$EXPORT_CSV" == "true" ]]; then
-        log_info "CSV results saved to: $OUTPUT_DIR"
+        log_info "Both standard and detailed CSV formats were exported"
     fi
     print_separator
 }
