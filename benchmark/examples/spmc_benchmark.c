@@ -172,19 +172,11 @@ static int run_benchmark_test(spmc_queue_t *queue, const char *test_type) {
     // Export results to CSV
     if (mpi_rank == 0) {
         char filename[256];
-        char detailed_filename[256];
         
-        // Export standard CSV
+        // Export standard CSV only
         snprintf(filename, sizeof(filename), "benchmark_%s_%dprocs.csv", test_type, mpi_size);
         if (benchmark_export_csv(&bench_ctx, filename) == 0) {
-            printf("Standard CSV exported to: %s\n", filename);
-        }
-        
-        // Export detailed readable CSV  
-        snprintf(detailed_filename, sizeof(detailed_filename), "benchmark_%s_%dprocs_detailed.csv", test_type, mpi_size);
-        if (benchmark_export_csv_detailed(&bench_ctx, detailed_filename) == 0) {
-            printf("Detailed CSV exported to: %s\n", detailed_filename);
-            printf("💡 Open the detailed CSV file for easy-to-read analysis!\n");
+            printf("CSV exported to: %s\n", filename);
         }
     }
     

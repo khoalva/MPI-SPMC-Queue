@@ -35,13 +35,18 @@ TEST_TYPE=${2:-"quick"}
 VERBOSE=${3:-false}
 EXPORT_CSV=${4:-false}
 
+# Create unique folder name with timestamp
+timestamp=$(date +"%Y%m%d_%H%M%S")
+SPMC_TYPE_DIR="${RESULTS_DIR}/benchmark_${TEST_TYPE}_${NUM_PROCESSES}procs_${timestamp}"
+
 # Create directories
-mkdir -p "$RESULTS_DIR" "$LOG_DIR"
+mkdir -p "$RESULTS_DIR" "$SPMC_TYPE_DIR" "$LOG_DIR"
 
 log_info "Running single benchmark test..."
 log_info "Test type: $TEST_TYPE"
 log_info "Processes: $NUM_PROCESSES"
 log_info "Verbose: $VERBOSE"
+log_info "Results will be saved to: $(basename "$SPMC_TYPE_DIR")"
 
 # Check if benchmark executable exists
 if [[ ! -x "$EXAMPLE_BIN" ]]; then
@@ -56,7 +61,6 @@ if [[ ! -x "$EXAMPLE_BIN" ]]; then
 fi
 
 # Build MPI command
-timestamp=$(date +"%Y%m%d_%H%M%S")
 log_file="${LOG_DIR}/quick_test_${TEST_TYPE}_${NUM_PROCESSES}procs_${timestamp}.log"
 
 mpi_cmd="mpirun"
@@ -69,6 +73,9 @@ fi
 mpi_cmd="$mpi_cmd -np $NUM_PROCESSES $EXAMPLE_BIN $TEST_TYPE"
 
 log_info "Executing: $mpi_cmd"
+
+# Change to SPMC type directory before running so CSV files are created there
+cd "$SPMC_TYPE_DIR"
 
 # Execute benchmark
 if [[ "$VERBOSE" == "true" ]]; then
@@ -88,17 +95,27 @@ if [[ $exit_code -eq 0 ]]; then
     tail -20 "$log_file"
     echo ""
     
-    # Always try to move CSV results if they exist (regardless of EXPORT_CSV flag)
-    csv_file="benchmark_${TEST_TYPE}_${NUM_PROCESSES}procs.csv"
+    # CSV files should now be created directly in SPMC type directory
+    log_info "CSV files should be created in: $SPMC_TYPE_DIR"
     
-    # Check if CSV file exists in benchmark directory (most likely location)
-    if [[ -f "${BENCHMARK_DIR}/$csv_file" ]]; then
-        mv "${BENCHMARK_DIR}/$csv_file" "$RESULTS_DIR/"
-        log_info "Results moved to: $RESULTS_DIR/$csv_file"
-    # Also check examples directory (in case it's created there)
-    elif [[ -f "${BENCHMARK_DIR}/examples/$csv_file" ]]; then
-        mv "${BENCHMARK_DIR}/examples/$csv_file" "$RESULTS_DIR/"
-        log_info "Results moved from examples to: $RESULTS_DIR/$csv_file"
+    # Return to benchmark directory
+    cd "$BENCHMARK_DIR"
+    
+    # Check if files were created in SPMC type directory
+    csv_count=$(find "$SPMC_TYPE_DIR" -name "*.csv" -type f 2>/dev/null | wc -l)
+    if [[ $csv_count -gt 0 ]]; then
+        log_info "Found $csv_count CSV file(s) in SPMC type directory"
+        find "$SPMC_TYPE_DIR" -name "*.csv" -type f -exec basename {} \; | while read filename; do
+            log_info "Available: $filename"
+        done
+    else
+        log_info "No CSV files found in SPMC type directory - checking benchmark dir"
+        # Fallback: move only the standard CSV file (not detailed)
+        csv_pattern="benchmark_${TEST_TYPE}_${NUM_PROCESSES}procs.csv"
+        if [[ -f "${BENCHMARK_DIR}/$csv_pattern" ]]; then
+            mv "${BENCHMARK_DIR}/$csv_pattern" "$SPMC_TYPE_DIR/"
+            log_info "Moved: $csv_pattern"
+        fi
     fi
     
     log_info "Full log saved to: $log_file"

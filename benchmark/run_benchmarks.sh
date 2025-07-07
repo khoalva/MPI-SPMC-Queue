@@ -20,19 +20,19 @@ NC='\033[0m' # No Color
 
 # Helper functions
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    echo -e "${BLUE}[INFO]${NC} $1" >&2
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    echo -e "${GREEN}[SUCCESS]${NC} $1" >&2
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    echo -e "${YELLOW}[WARNING]${NC} $1" >&2
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
 print_separator() {
@@ -57,6 +57,7 @@ print_usage() {
     echo ""
     echo "Options:"
     echo "  -p, --processes NUM   Number of MPI processes (default: 3)"
+    echo "  -s, --spmc-path PATH  Path to SPMC implementation directory"
     echo "  -o, --output DIR      Output directory for results"
     echo "  -l, --log-level LEVEL Log level (info, warning, error)"
     echo "  -h, --help           Show this help message"
@@ -69,7 +70,8 @@ print_usage() {
     echo "Examples:"
     echo "  $0 quick"
     echo "  $0 throughput -p 4"
-    echo "  $0 suite -p 6 --export-csv"
+    echo "  $0 throughput -p 4 -s ../spmc_2004"
+    echo "  $0 suite -p 6 --export-csv -s /path/to/spmc_impl"
     echo "  $0 scalability -o /tmp/results"
     echo ""
 }
@@ -78,6 +80,7 @@ print_usage() {
 NUM_PROCESSES=3
 TEST_TYPE="quick"
 OUTPUT_DIR=""
+SPMC_PATH=""
 VERBOSE=false
 NO_BUILD=false
 EXPORT_CSV=false
@@ -89,6 +92,10 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         -p|--processes)
             NUM_PROCESSES="$2"
+            shift 2
+            ;;
+        -s|--spmc-path)
+            SPMC_PATH="$2"
             shift 2
             ;;
         -o|--output)
@@ -165,15 +172,43 @@ detect_spmc_types() {
     echo "${spmc_types[@]}"
 }
 
-# Function to select SPMC type
-select_spmc_type() {
+# Function to select SPMC implementation
+select_spmc_implementation() {
+    # If SPMC path was specified via command line, validate and use it
+    if [[ -n "$SPMC_PATH" ]]; then
+        # Handle relative paths properly
+        if [[ "$SPMC_PATH" == /* ]]; then
+            # Absolute path
+            local abs_path="$SPMC_PATH"
+        else
+            # Relative path - resolve from current directory
+            local abs_path=$(realpath "$SPMC_PATH" 2>/dev/null || echo "$SPMC_PATH")
+        fi
+        
+        if [[ ! -d "$abs_path" ]]; then
+            log_error "Specified SPMC path '$SPMC_PATH' does not exist"
+            log_error "Resolved to: $abs_path"
+            exit 1
+        fi
+        
+        local spmc_name=$(basename "$abs_path")
+        log_info "Using specified SPMC implementation: $spmc_name at $abs_path"
+        # Force output to be flushed before returning
+        sleep 0.1
+        echo "$abs_path"
+        return
+    fi
+    
     local available_types=($(detect_spmc_types))
     
     if [[ ${#available_types[@]} -eq 0 ]]; then
         log_error "No SPMC implementations found in workspace"
+        log_info "Use -s option to specify SPMC implementation path"
         exit 1
     elif [[ ${#available_types[@]} -eq 1 ]]; then
-        echo "${available_types[0]}"
+        local spmc_path="${BENCHMARK_DIR}/../${available_types[0]}"
+        log_info "Found single SPMC implementation: ${available_types[0]}"
+        echo "$spmc_path"
     else
         log_info "Multiple SPMC implementations found:"
         for i in "${!available_types[@]}"; do
@@ -183,7 +218,9 @@ select_spmc_type() {
         while true; do
             read -p "Select SPMC type (1-${#available_types[@]}): " choice
             if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#available_types[@]} ]]; then
-                echo "${available_types[$((choice-1))]}"
+                local selected_type="${available_types[$((choice-1))]}"
+                local spmc_path="${BENCHMARK_DIR}/../$selected_type"
+                echo "$spmc_path"
                 break
             else
                 log_error "Invalid selection. Please choose 1-${#available_types[@]}"
@@ -192,19 +229,63 @@ select_spmc_type() {
     fi
 }
 
+# Function to build SPMC implementation
+build_spmc_implementation() {
+    local spmc_path="$1"
+    local spmc_name=$(basename "$spmc_path")
+    
+    echo "" >&2
+    log_info "Building SPMC implementation: $spmc_name"
+    log_info "SPMC path: $spmc_path"
+    
+    # Debug: Show what we're checking
+    log_info "Checking if directory exists..."
+    if [[ ! -d "$spmc_path" ]]; then
+        log_error "SPMC directory does not exist: $spmc_path"
+        log_info "Current working directory: $(pwd)"
+        log_info "Attempting to list parent directory:"
+        ls -la "$(dirname "$spmc_path")" 2>/dev/null || log_error "Cannot list parent directory"
+        return 1
+    fi
+    
+    log_info "Directory exists, checking for Makefile..."
+    if [[ ! -f "$spmc_path/Makefile" ]]; then
+        log_error "No Makefile found in $spmc_path"
+        log_info "Contents of $spmc_path:"
+        ls -la "$spmc_path" 2>/dev/null || log_error "Cannot list directory contents"
+        return 1
+    fi
+    
+    log_info "Found Makefile, starting build..."
+    cd "$spmc_path" || {
+        log_error "Failed to change directory to $spmc_path"
+        return 1
+    }
+    
+    if make clean && make all; then
+        log_success "SPMC implementation built successfully"
+        cd "$BENCHMARK_DIR"
+        return 0
+    else
+        log_error "Build failed with make command"
+        cd "$BENCHMARK_DIR"
+        return 1
+    fi
+}
 # Function to run a single benchmark
 run_benchmark() {
     local test_type="$1"
     local num_procs="$2"
-    local spmc_type="$3"
+    local spmc_path="$3"
+    local spmc_name=$(basename "$spmc_path")
     local timestamp=$(date +"%Y%m%d_%H%M%S")
-    local log_file="${LOG_DIR}/benchmark_${test_type}_${spmc_type}_${num_procs}procs_${timestamp}.log"
+    local log_file="${LOG_DIR}/benchmark_${test_type}_${spmc_name}_${num_procs}procs_${timestamp}.log"
     
-    # Create subdirectory for this SPMC type
-    local spmc_results_dir="${OUTPUT_DIR}/${spmc_type}"
+    # Create subdirectory for this SPMC type with timestamp and process count
+    local spmc_results_dir="${OUTPUT_DIR}/${spmc_name}_${test_type}_${num_procs}procs_${timestamp}"
     mkdir -p "$spmc_results_dir"
     
-    log_info "Running $test_type benchmark with $num_procs processes for $spmc_type..."
+    log_info "Running $test_type benchmark with $num_procs processes for $spmc_name..."
     
     # Build MPI command
     local mpi_cmd="mpirun"
@@ -229,11 +310,9 @@ run_benchmark() {
     if [[ $exit_code -eq 0 ]]; then
         log_success "$test_type benchmark completed successfully"
         
-        # Always try to move CSV results if they exist (regardless of EXPORT_CSV flag)
+        # Always try to move CSV results if they exist (only standard CSV, not detailed)
         local csv_file="benchmark_${test_type}_${num_procs}procs.csv"
-        local detailed_csv_file="benchmark_${test_type}_${num_procs}procs_detailed.csv"
-        local new_csv_name="${spmc_type}_${test_type}_${num_procs}procs_${timestamp}.csv"
-        local new_detailed_csv_name="${spmc_type}_${test_type}_${num_procs}procs_detailed_${timestamp}.csv"
+        local new_csv_name="${spmc_name}_${test_type}_${num_procs}procs_${timestamp}.csv"
         
         # Check if CSV file exists in benchmark directory (most likely location)
         if [[ -f "${BENCHMARK_DIR}/$csv_file" ]]; then
@@ -243,15 +322,6 @@ run_benchmark() {
         elif [[ -f "${BENCHMARK_DIR}/examples/$csv_file" ]]; then
             mv "${BENCHMARK_DIR}/examples/$csv_file" "$spmc_results_dir/$new_csv_name"
             log_info "Results moved from examples to: $spmc_results_dir/$new_csv_name"
-        fi
-        
-        # Handle detailed CSV file
-        if [[ -f "${BENCHMARK_DIR}/$detailed_csv_file" ]]; then
-            mv "${BENCHMARK_DIR}/$detailed_csv_file" "$spmc_results_dir/$new_detailed_csv_name"
-            log_info "Detailed results moved to: $spmc_results_dir/$new_detailed_csv_name"
-        elif [[ -f "${BENCHMARK_DIR}/examples/$detailed_csv_file" ]]; then
-            mv "${BENCHMARK_DIR}/examples/$detailed_csv_file" "$spmc_results_dir/$new_detailed_csv_name"
-            log_info "Detailed results moved from examples to: $spmc_results_dir/$new_detailed_csv_name"
         fi
     else
         log_error "$test_type benchmark failed (exit code: $exit_code)"
@@ -319,10 +389,20 @@ main() {
     log_info "SPMC Queue Benchmark Runner"
     print_separator
     
-    # Detect and select SPMC type
-    local spmc_type=$(select_spmc_type)
-    log_info "Selected SPMC implementation: $spmc_type"
+    # Detect and select SPMC implementation
+    local spmc_path=$(select_spmc_implementation)
+    local spmc_name=$(basename "$spmc_path")
+    log_info "Selected SPMC implementation: $spmc_name at $spmc_path"
     echo ""
+    
+    # Build SPMC implementation first
+    if [[ "$NO_BUILD" != "true" ]]; then
+        if ! build_spmc_implementation "$spmc_path"; then
+            log_error "Failed to build SPMC implementation"
+            exit 1
+        fi
+        echo ""
+    fi
     
     # Build benchmark if needed
     if [[ "$NO_BUILD" != "true" ]]; then
@@ -353,19 +433,19 @@ main() {
     # Run requested benchmark(s)
     case "$TEST_TYPE" in
         suite|all)
-            run_benchmark_suite "$spmc_type"
+            run_benchmark_suite "$spmc_path"
             ;;
         *)
-            run_benchmark "$TEST_TYPE" "$NUM_PROCESSES" "$spmc_type"
+            run_benchmark "$TEST_TYPE" "$NUM_PROCESSES" "$spmc_path"
             ;;
     esac
     
     print_separator
     log_success "All benchmarks completed successfully!"
     log_info "Log files saved to: $LOG_DIR"
-    log_info "CSV results organized by SPMC type in: $OUTPUT_DIR/$spmc_type"
+    log_info "CSV results organized by SPMC type with timestamps in: $OUTPUT_DIR"
     if [[ "$EXPORT_CSV" == "true" ]]; then
-        log_info "Both standard and detailed CSV formats were exported"
+        log_info "CSV results exported successfully"
     fi
     print_separator
 }

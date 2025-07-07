@@ -130,11 +130,6 @@ void benchmark_print_report(const benchmark_ctx_t *ctx);
 int benchmark_export_csv(const benchmark_ctx_t *ctx, const char *filename);
 
 /**
- * Export detailed results to readable CSV format with summary
- */
-int benchmark_export_csv_detailed(const benchmark_ctx_t *ctx, const char *filename);
-
-/**
  * Get current time in microseconds
  */
 double benchmark_get_time_us(void);
