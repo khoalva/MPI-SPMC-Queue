@@ -277,13 +277,10 @@ run_benchmark() {
     local test_type="$1"
     local num_procs="$2"
     local spmc_path="$3"
+    local session_folder="$4"
     local spmc_name=$(basename "$spmc_path")
     local timestamp=$(date +"%Y%m%d_%H%M%S")
     local log_file="${LOG_DIR}/benchmark_${test_type}_${spmc_name}_${num_procs}procs_${timestamp}.log"
-    
-    # Create subdirectory for this SPMC type with timestamp and process count
-    local spmc_results_dir="${OUTPUT_DIR}/${spmc_name}_${test_type}_${num_procs}procs_${timestamp}"
-    mkdir -p "$spmc_results_dir"
     
     log_info "Running $test_type benchmark with $num_procs processes for $spmc_name..."
     
@@ -310,18 +307,18 @@ run_benchmark() {
     if [[ $exit_code -eq 0 ]]; then
         log_success "$test_type benchmark completed successfully"
         
-        # Always try to move CSV results if they exist (only standard CSV, not detailed)
+        # Always try to move CSV results if they exist
         local csv_file="benchmark_${test_type}_${num_procs}procs.csv"
         local new_csv_name="${spmc_name}_${test_type}_${num_procs}procs_${timestamp}.csv"
         
         # Check if CSV file exists in benchmark directory (most likely location)
         if [[ -f "${BENCHMARK_DIR}/$csv_file" ]]; then
-            mv "${BENCHMARK_DIR}/$csv_file" "$spmc_results_dir/$new_csv_name"
-            log_info "Results moved to: $spmc_results_dir/$new_csv_name"
+            mv "${BENCHMARK_DIR}/$csv_file" "${session_folder}/$new_csv_name"
+            log_info "Results saved to: ${session_folder}/$new_csv_name"
         # Also check examples directory (in case it's created there)
         elif [[ -f "${BENCHMARK_DIR}/examples/$csv_file" ]]; then
-            mv "${BENCHMARK_DIR}/examples/$csv_file" "$spmc_results_dir/$new_csv_name"
-            log_info "Results moved from examples to: $spmc_results_dir/$new_csv_name"
+            mv "${BENCHMARK_DIR}/examples/$csv_file" "${session_folder}/$new_csv_name"
+            log_info "Results saved to: ${session_folder}/$new_csv_name"
         fi
     else
         log_error "$test_type benchmark failed (exit code: $exit_code)"
@@ -332,6 +329,9 @@ run_benchmark() {
 
 # Function to run benchmark suite
 run_benchmark_suite() {
+    local spmc_path="$1"
+    local session_folder="$2"
+    
     log_info "Running complete benchmark suite..."
     print_separator
     
@@ -362,7 +362,7 @@ run_benchmark_suite() {
             fi
             
             log_info "Running test $((test_count + 1))/$max_tests: $test with $procs processes"
-            run_benchmark "$test" "$procs" "$1"
+            run_benchmark "$test" "$procs" "$spmc_path" "$session_folder"
             test_count=$((test_count + 1))
             echo ""
             
@@ -376,7 +376,7 @@ run_benchmark_suite() {
     # Run one scalability test only
     if [[ $test_count -lt $max_tests ]]; then
         log_info "Running scalability test..."
-        run_benchmark "scalability" "3" "$1"
+        run_benchmark "scalability" "3" "$spmc_path" "$session_folder"
         test_count=$((test_count + 1))
     fi
     
@@ -427,23 +427,29 @@ main() {
     # Create output directory
     mkdir -p "$OUTPUT_DIR"
     log_info "Results will be saved to: $OUTPUT_DIR"
-    log_info "Results will be organized by SPMC type in subdirectories"
+    
+    # Create session folder for this benchmark run
+    local session_timestamp=$(date +"%Y%m%d_%H%M%S")
+    local spmc_name=$(basename "$spmc_path")
+    local session_folder="${OUTPUT_DIR}/session_${spmc_name}_${session_timestamp}"
+    mkdir -p "$session_folder"
+    log_info "Session folder created: $session_folder"
     echo ""
     
     # Run requested benchmark(s)
     case "$TEST_TYPE" in
         suite|all)
-            run_benchmark_suite "$spmc_path"
+            run_benchmark_suite "$spmc_path" "$session_folder"
             ;;
         *)
-            run_benchmark "$TEST_TYPE" "$NUM_PROCESSES" "$spmc_path"
+            run_benchmark "$TEST_TYPE" "$NUM_PROCESSES" "$spmc_path" "$session_folder"
             ;;
     esac
     
     print_separator
     log_success "All benchmarks completed successfully!"
     log_info "Log files saved to: $LOG_DIR"
-    log_info "CSV results organized by SPMC type with timestamps in: $OUTPUT_DIR"
+    log_info "CSV results saved to session folder: $session_folder"
     if [[ "$EXPORT_CSV" == "true" ]]; then
         log_info "CSV results exported successfully"
     fi

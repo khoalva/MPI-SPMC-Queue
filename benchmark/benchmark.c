@@ -50,6 +50,12 @@ int benchmark_init(benchmark_ctx_t *ctx, void *queue,
 /**
  * Create predefined benchmark configurations
  */
+benchmark_config_t benchmark_config_quick_test(int num_items) {
+    benchmark_config_t config = BENCHMARK_QUICK_TEST;
+    config.num_items = num_items;
+    return config;
+}
+
 benchmark_config_t benchmark_config_throughput_test(int num_items) {
     benchmark_config_t config = BENCHMARK_THROUGHPUT_TEST;
     config.num_items = num_items;

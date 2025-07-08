@@ -188,7 +188,7 @@ static int run_benchmark_test(spmc_queue_t *queue, const char *test_type) {
 
 static benchmark_config_t get_test_config(const char *test_type) {
     if (strcmp(test_type, "quick") == 0) {
-        return benchmark_config_throughput_test(1000);
+        return benchmark_config_quick_test(1000);
     } else if (strcmp(test_type, "throughput") == 0) {
         return benchmark_config_throughput_test(10000);
     } else if (strcmp(test_type, "latency") == 0) {
