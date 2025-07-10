@@ -196,6 +196,15 @@ int mpi_win_unlock_all_multiple(mpi_window_t *windows, int count) {
     return last_error;
 }
 
+int mpi_win_fence(int assert, mpi_window_t *win) {
+    if (!win || !win->is_valid) return MPI_ERR_ARG;
+    int err = MPI_Win_fence(assert, win->window);
+    if (err != MPI_SUCCESS) {
+        mpi_print_error(err, "MPI_Win_fence", __FILE__, __LINE__);
+    }
+    return err;
+}
+
 // ============================================================================
 // ONE-SIDED COMMUNICATION
 // ============================================================================
@@ -512,4 +521,36 @@ void mpi_print_info(const mpi_context_t *ctx) {
         printf("Unable to get processor name\n");
     }
     fflush(stdout);
+}
+
+int mpi_win_lock(int lock_type, int rank, int assert, mpi_window_t *win) {
+    if (!win) {
+        fprintf(stderr, "[MPI_LIB ERROR] NULL window pointer in mpi_win_lock\n");
+        return MPI_ERR_ARG;
+    }
+    if (!win->is_valid) {
+        fprintf(stderr, "[MPI_LIB ERROR] Invalid window in mpi_win_lock\n");
+        return MPI_ERR_ARG;
+    }
+    int err = MPI_Win_lock(lock_type, rank, assert, win->window);
+    if (err != MPI_SUCCESS) {
+        mpi_print_error(err, "MPI_Win_lock", __FILE__, __LINE__);
+    }
+    return err;
+}
+
+int mpi_win_unlock(int rank, mpi_window_t *win) {
+    if (!win) {
+        fprintf(stderr, "[MPI_LIB ERROR] NULL window pointer in mpi_win_unlock\n");
+        return MPI_ERR_ARG;
+    }
+    if (!win->is_valid) {
+        fprintf(stderr, "[MPI_LIB ERROR] Invalid window in mpi_win_unlock\n");
+        return MPI_ERR_ARG;
+    }
+    int err = MPI_Win_unlock(rank, win->window);
+    if (err != MPI_SUCCESS) {
+        mpi_print_error(err, "MPI_Win_unlock", __FILE__, __LINE__);
+    }
+    return err;
 }

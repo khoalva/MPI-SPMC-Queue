@@ -213,6 +213,32 @@ int mpi_win_lock_all_multiple(mpi_window_t *windows, int count);
  */
 int mpi_win_unlock_all_multiple(mpi_window_t *windows, int count);
 
+/**
+ * Wrapper for MPI_Win_fence with error handling
+ * @param assert Fence assertion (usually 0)
+ * @param win Pointer to window structure
+ * @return MPI_SUCCESS on success, error code otherwise
+ */
+int mpi_win_fence(int assert, mpi_window_t *win);
+
+/**
+ * Lock window for a specific target (active/passive target synchronization)
+ * @param lock_type Lock type (e.g., MPI_LOCK_SHARED or MPI_LOCK_EXCLUSIVE)
+ * @param rank Target rank to lock (use MPI_PROC_NULL for all)
+ * @param assert Assertion flags (usually 0)
+ * @param win Pointer to window structure
+ * @return MPI_SUCCESS on success, error code otherwise
+ */
+int mpi_win_lock(int lock_type, int rank, int assert, mpi_window_t *win);
+
+/**
+ * Unlock window for a specific target
+ * @param rank Target rank to unlock (use MPI_PROC_NULL for all)
+ * @param win Pointer to window structure
+ * @return MPI_SUCCESS on success, error code otherwise
+ */
+int mpi_win_unlock(int rank, mpi_window_t *win);
+
 // ============================================================================
 // ONE-SIDED COMMUNICATION
 // ============================================================================

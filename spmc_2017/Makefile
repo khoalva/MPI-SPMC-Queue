@@ -15,7 +15,10 @@ MPI_LIB_LIB = $(MPI_LIB_DIR)/lib
 INCLUDES = -I$(SRC_DIR) -I$(MPI_LIB_INCLUDE)
 
 # Library paths
-LIBS = -L$(MPI_LIB_LIB) -lmpi_lib
+LIBS = -L$(MPI_LIB_DIR)/lib -lmpi_wrapper
+
+# Add rpath to link shared libraries properly
+LDFLAGS += -Wl,-rpath,$(MPI_LIB_DIR)/lib
 
 # Source files
 SOURCES = $(SRC_DIR)/main_spmc.c $(SRC_DIR)/spmc_queue.c
@@ -48,18 +51,18 @@ clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)
 	@echo "Clean complete"
 
-# Run with different process counts
+# Run with different process counts (with proper library path)
 run-2: $(TARGET)
 	@echo "Running with 2 processes (1 producer, 1 consumer)..."
-	mpirun -np 2 $(TARGET)
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun --allow-run-as-root -np 2 $(TARGET)
 
 run-4: $(TARGET)
 	@echo "Running with 4 processes (1 producer, 3 consumers)..."
-	mpirun -np 4 $(TARGET)
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun --allow-run-as-root -np 4 $(TARGET)
 
 run-8: $(TARGET)
 	@echo "Running with 8 processes (1 producer, 7 consumers)..."
-	mpirun -np 8 $(TARGET)
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun --allow-run-as-root -np 8 $(TARGET)
 
 # Debug version
 debug: CFLAGS += -DDEBUG -g -O0
@@ -74,7 +77,7 @@ check-deps:
 	@echo "Checking dependencies..."
 	@which mpicc > /dev/null || (echo "Error: mpicc not found. Install MPI development package." && exit 1)
 	@test -f $(MPI_LIB_INCLUDE)/mpi_lib.h || (echo "Error: mpi_lib.h not found in $(MPI_LIB_INCLUDE)" && exit 1)
-	@test -f $(MPI_LIB_LIB)/libmpi_lib.a || (echo "Error: libmpi_lib.a not found in $(MPI_LIB_LIB)" && exit 1)
+	@test -f $(MPI_LIB_LIB)/libmpi_wrapper.a || (echo "Error: libmpi_wrapper.a not found in $(MPI_LIB_LIB)" && exit 1)
 	@echo "All dependencies found"
 
 # Help target
@@ -89,9 +92,6 @@ help:
 	@echo "  run-8      - Run with 8 processes"
 	@echo "  check-deps - Check if dependencies are available"
 	@echo "  help       - Show this help message"
-	@echo "// FFQ implementation file" > $(SRC_DIR)/ffq.c
-	@echo "// Main program file" > $(SRC_DIR)/main.c
-	@echo "Basic files created"
 
 # Directory structure:
 # - include/  : Header files (*.h)
