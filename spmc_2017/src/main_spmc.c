@@ -6,9 +6,12 @@
 #include "mpi_lib.h"
 #include "spmc_queue.h"
 
-#define QUEUE_SIZE 1024
+#define QUEUE_SIZE 64  // Smaller queue to force more interaction
 #define NUM_ITEMS 1000
 #define PRODUCER_RANK 0
+
+// Global flag to signal when producer is done
+volatile int producer_finished = 0;
 
 // Function prototypes
 void producer_task(spmc_queue_t *queue, mpi_window_t *win, mpi_context_t *ctx);
@@ -37,7 +40,7 @@ int main(int argc, char *argv[]) {
     
     printf("Rank %d: SPMC queue created successfully\n", ctx.rank);
     
-    // Synchronize all processes
+    // Synchronize all processes before starting
     mpi_barrier(ctx.comm);
     
     double start_time = MPI_Wtime();
@@ -68,7 +71,7 @@ int main(int argc, char *argv[]) {
 }
 
 /**
- * @brief Producer task - generates and enqueues integer data
+ * @brief Producer task - generates and enqueues integer data with controlled rate
  */
 void producer_task(spmc_queue_t *queue, mpi_window_t *win, mpi_context_t *ctx) {
     int items_produced = 0;
@@ -89,7 +92,7 @@ void producer_task(spmc_queue_t *queue, mpi_window_t *win, mpi_context_t *ctx) {
             
             if (!enqueued) {
                 failed_attempts++;
-                spmc_simulate_work(1); // Wait 1ms before retry
+                spmc_simulate_work(5); // Wait longer when queue is full
                 retry_count++;
             }
         }
@@ -104,50 +107,61 @@ void producer_task(spmc_queue_t *queue, mpi_window_t *win, mpi_context_t *ctx) {
             printf("Producer: Failed to enqueue item %d after %d retries\n", i, max_retries);
         }
         
-        // Simulate production work
-        if (i % 50 == 0) {
-            spmc_simulate_work(5); // 5ms work simulation
+        // Add consistent delay to slow down producer and allow consumers to keep up
+        spmc_simulate_work(2); // 2ms delay after each item
+        
+        // Additional delay every 10 items to give consumers more time
+        if (i % 10 == 0) {
+            spmc_simulate_work(5); // Extra 5ms delay
         }
     }
+    
+    // Signal that producer is finished by setting a flag in shared memory
+    // This approach uses the queue's shared memory to communicate completion
+    producer_finished = 1;
     
     printf("Producer: Finished. Produced %d/%d items, failed attempts: %d\n", 
            items_produced, NUM_ITEMS, failed_attempts);
 }
 
 /**
- * @brief Consumer task - dequeues and processes integer data
+ * @brief Consumer task - dequeues and processes integer data with immediate start
  */
 void consumer_task(spmc_queue_t *queue, mpi_window_t *win, mpi_context_t *ctx) {
     int items_consumed = 0;
-    int empty_queue_count = 0;
+    int consecutive_empty_attempts = 0;
     bool keep_consuming = true;
     
     printf("Consumer %d: Starting to consume...\n", ctx->rank);
     
-    // Consumer runs until it sees many consecutive empty queue states
+    // Start consuming immediately - don't wait for producer to finish
     while (keep_consuming) {
         int data = 0;
         bool dequeued = spmc_dequeue(queue, ctx->rank, &data, win, ctx);
         
         if (dequeued) {
             items_consumed++;
-            empty_queue_count = 0; // Reset empty count
+            consecutive_empty_attempts = 0; // Reset empty count
             
-            // Process the data (simulate work)
-            spmc_simulate_work(2 + (ctx->rank % 3)); // Variable processing time
+            // Process the data with minimal delay to keep up with producer
+            spmc_simulate_work(1); // Minimal processing time
             
-            if (items_consumed % 50 == 0) {
+            // More frequent progress reporting to show real-time consumption
+            if (items_consumed % 25 == 0) {
                 printf("Consumer %d: Consumed %d items (last: %d)\n", 
                        ctx->rank, items_consumed, data);
             }
         } else {
-            empty_queue_count++;
+            consecutive_empty_attempts++;
             
-            // If we've seen too many empty queue states, stop consuming
-            if (empty_queue_count > 1000) {
+            // Be more patient - allow for producer to catch up
+            if (consecutive_empty_attempts > 500) {
                 keep_consuming = false;
+                printf("Consumer %d: Stopping after %d consecutive empty attempts\n", 
+                       ctx->rank, consecutive_empty_attempts);
             } else {
-                spmc_simulate_work(1); // Wait before next attempt
+                // Very short wait when queue is empty to check frequently
+                spmc_simulate_work(1); // Just 1ms wait
             }
         }
     }

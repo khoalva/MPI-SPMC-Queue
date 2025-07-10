@@ -239,6 +239,14 @@ int mpi_win_lock(int lock_type, int rank, int assert, mpi_window_t *win);
  */
 int mpi_win_unlock(int rank, mpi_window_t *win);
 
+/**
+ * Wrapper for MPI_Win_flush with error handling
+ * @param rank Target rank to flush
+ * @param win Pointer to window structure
+ * @return MPI_SUCCESS on success, error code otherwise
+ */
+int mpi_win_flush(int rank, mpi_window_t *win);
+
 // ============================================================================
 // ONE-SIDED COMMUNICATION
 // ============================================================================
