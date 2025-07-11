@@ -21,7 +21,11 @@ typedef struct {
     int tail;               // Tail pointer  
     int lastItemDequeued;   // Last dequeued item index
     mpi_context_t mpi_ctx; // MPI context for communication
-    spmc_cell_t cells[];    // Flexible array member for cells
+    spmc_cell_t* cells; // Array of cells for the queue
+
+    mpi_window_t win_cells; // MPI window for cells
+    mpi_window_t win_head; // MPI window for head pointer
+    mpi_window_t win_tail; // MPI window for tail pointer
 } spmc_queue_t;
 
 // Producer operations (Single Producer)
