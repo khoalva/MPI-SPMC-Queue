@@ -14,71 +14,76 @@
 volatile int producer_finished = 0;
 
 // Function prototypes
-void producer_task(spmc_queue_t *queue, mpi_window_t *win, mpi_context_t *ctx);
-void consumer_task(spmc_queue_t *queue, mpi_window_t *win, mpi_context_t *ctx);
+void producer_task(spmc_queue_t *queue, mpi_window_t *win);
+void consumer_task(spmc_queue_t *queue, mpi_window_t *win);
 
 int main(int argc, char *argv[]) {
     mpi_context_t ctx;
     mpi_window_t win;
-    spmc_queue_t *queue;
-    
-    // Initialize MPI using mpi_lib
+    // Cấp phát queue với kích thước tối đa (hoặc phù hợp)
+    spmc_queue_t *queue = malloc(sizeof(spmc_queue_t) + QUEUE_SIZE * sizeof(spmc_cell_t));
+    if (!queue) {
+        fprintf(stderr, "Failed to allocate queue memory\n");
+        return 1;
+    }
+
+    // Khởi tạo MPI
     if (mpi_init(argc, argv, &ctx) != MPI_SUCCESS) {
         fprintf(stderr, "Failed to initialize MPI\n");
+        free(queue);
         return 1;
     }
-    
+
     printf("Process %d of %d started\n", ctx.rank, ctx.size);
-    
-    // Create SPMC queue
-    queue = spmc_queue_create(QUEUE_SIZE, &win, &ctx);
-    if (!queue) {
-        fprintf(stderr, "Failed to create SPMC queue on rank %d\n", ctx.rank);
+
+    // Gán context vào queue trước khi init
+    queue->mpi_ctx = ctx;
+
+    // Khởi tạo queue (không dùng global_ctx)
+    if (spmc_queue_init(queue, argc, argv) != 0) {
+        fprintf(stderr, "Failed to initialize SPMC queue on rank %d\n", ctx.rank);
         mpi_finalize();
+        free(queue);
         return 1;
     }
-    
-    printf("Rank %d: SPMC queue created successfully\n", ctx.rank);
-    
-    // Synchronize all processes before starting
+
+    printf("Rank %d: SPMC queue initialized successfully\n", ctx.rank);
+
     mpi_barrier(ctx.comm);
-    
+
     double start_time = MPI_Wtime();
-    
-    // Assign roles: rank 0 is producer, others are consumers
+
     if (ctx.rank == PRODUCER_RANK) {
         printf("Rank %d: Starting as PRODUCER\n", ctx.rank);
-        producer_task(queue, &win, &ctx);
+        producer_task(queue, &win);
     } else {
         printf("Rank %d: Starting as CONSUMER\n", ctx.rank);
-        consumer_task(queue, &win, &ctx);
+        consumer_task(queue, &win);
     }
-    
-    // Wait for all processes to complete
+
     mpi_barrier(ctx.comm);
-    
+
     double end_time = MPI_Wtime();
-    
+
     if (ctx.rank == PRODUCER_RANK) {
         printf("Total execution time: %.6f seconds\n", end_time - start_time);
     }
-    
-    // Cleanup
-    spmc_queue_destroy(&win);
+
+    mpi_win_destroy(&win);
     mpi_finalize();
-    
+    free(queue);
+
     return 0;
 }
 
 /**
  * @brief Producer task - generates and enqueues integer data with controlled rate
  */
-void producer_task(spmc_queue_t *queue, mpi_window_t *win, mpi_context_t *ctx) {
+void producer_task(spmc_queue_t *queue, mpi_window_t *win) {
     int items_produced = 0;
     int failed_attempts = 0;
-    
+
     printf("Producer: Starting to produce %d items...\n", NUM_ITEMS);
-    
     for (int i = 0; i < NUM_ITEMS; i++) {
         int data = i + 1000; // Example: just use i+1000 as data
         
@@ -88,7 +93,7 @@ void producer_task(spmc_queue_t *queue, mpi_window_t *win, mpi_context_t *ctx) {
         const int max_retries = 100;
         
         while (!enqueued && retry_count < max_retries) {
-            enqueued = spmc_enqueue(queue, data, win, ctx);
+            enqueued = spmc_enqueue(queue, data, win);
             
             if (!enqueued) {
                 failed_attempts++;
@@ -127,17 +132,15 @@ void producer_task(spmc_queue_t *queue, mpi_window_t *win, mpi_context_t *ctx) {
 /**
  * @brief Consumer task - dequeues and processes integer data with immediate start
  */
-void consumer_task(spmc_queue_t *queue, mpi_window_t *win, mpi_context_t *ctx) {
+void consumer_task(spmc_queue_t *queue, mpi_window_t *win) {
     int items_consumed = 0;
     int consecutive_empty_attempts = 0;
     bool keep_consuming = true;
-    
+    mpi_context_t *ctx = &queue->mpi_ctx;
     printf("Consumer %d: Starting to consume...\n", ctx->rank);
-    
-    // Start consuming immediately - don't wait for producer to finish
     while (keep_consuming) {
         int data = 0;
-        bool dequeued = spmc_dequeue(queue, ctx->rank, &data, win, ctx);
+        bool dequeued = spmc_dequeue(queue, ctx->rank, &data, win);
         
         if (dequeued) {
             items_consumed++;

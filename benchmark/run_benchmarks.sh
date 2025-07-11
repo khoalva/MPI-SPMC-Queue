@@ -7,6 +7,11 @@ set -e
 
 # Configuration
 BENCHMARK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_DIR="$(cd "${BENCHMARK_DIR}/.." && pwd)"
+
+# Add library path for dynamic linking - FIXED VERSION
+export LD_LIBRARY_PATH="${BENCHMARK_DIR}/lib:${WORKSPACE_DIR}/mpi_lib/lib:/usr/local/lib:/usr/lib:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+
 RESULTS_DIR="${BENCHMARK_DIR}/results"
 LOG_DIR="${BENCHMARK_DIR}/logs"
 # Remove hardcoded EXAMPLE_BIN - will be set dynamically based on SPMC implementation
@@ -66,13 +71,15 @@ print_usage() {
     echo "  --export-csv         Export results to CSV"
     echo "  --max-tests NUM      Maximum number of tests for suite (default: 6)"
     echo "  --quick-suite        Run only essential tests (2-3 tests)"
+    echo "  --check-libs         Check library dependencies"
     echo ""
     echo "Examples:"
     echo "  $0 quick"
     echo "  $0 throughput -p 4"
     echo "  $0 throughput -p 4 -s ../spmc_2004"
-    echo "  $0 suite -p 6 --export-csv -s /path/to/spmc_impl"
-    echo "  $0 scalability -o /tmp/results"
+    echo "  $0 suite -p 6 --export-csv -s ../spmc_impl"
+    echo "  $0 scalability -o ./results"
+    echo "  $0 --check-libs"
     echo ""
 }
 
@@ -86,6 +93,7 @@ NO_BUILD=false
 EXPORT_CSV=false
 MAX_TESTS=6
 QUICK_SUITE=false
+CHECK_LIBS=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -126,6 +134,10 @@ while [[ $# -gt 0 ]]; do
             QUICK_SUITE=true
             shift
             ;;
+        --check-libs)
+            CHECK_LIBS=true
+            shift
+            ;;
         quick|throughput|latency|scalability|stress|suite|all)
             TEST_TYPE="$1"
             shift
@@ -146,28 +158,73 @@ fi
 # Create output directories
 mkdir -p "$OUTPUT_DIR" "$LOG_DIR"
 
+# Function to check library dependencies
+check_library_dependencies() {
+    local executable="$1"
+    
+    log_info "Checking library dependencies for: $executable"
+    log_info "Current LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-'(not set)'}"
+    
+    if [[ ! -f "$executable" ]]; then
+        log_error "Executable not found: $executable"
+        return 1
+    fi
+    
+    log_info "Dependencies check:"
+    if ldd "$executable" 2>/dev/null; then
+        echo ""
+        if ldd "$executable" 2>/dev/null | grep -q "not found"; then
+            log_error "Missing dependencies found:"
+            ldd "$executable" 2>/dev/null | grep "not found"
+            
+            log_info "Searching for missing libraries..."
+            local search_paths=(
+                "${BENCHMARK_DIR}/lib"
+                "${WORKSPACE_DIR}/mpi_lib/lib"
+                "/usr/local/lib"
+                "/usr/lib"
+                "/usr/lib/x86_64-linux-gnu"
+            )
+            
+            for path in "${search_paths[@]}"; do
+                if [[ -d "$path" ]]; then
+                    log_info "Checking $path:"
+                    find "$path" -name "*.so*" 2>/dev/null | head -5 | sed 's/^/  /'
+                fi
+            done
+            
+            return 1
+        else
+            log_success "All dependencies resolved successfully"
+            return 0
+        fi
+    else
+        log_error "Failed to check dependencies"
+        return 1
+    fi
+}
+
 # Function to debug path resolution
 debug_paths() {
     log_info "=== Path Debug Information ==="
     log_info "Current working directory: $(pwd)"
     log_info "Benchmark directory: $BENCHMARK_DIR"
-    log_info "Parent directory: $(cd "${BENCHMARK_DIR}/.." && pwd)"
+    log_info "Workspace directory: $WORKSPACE_DIR"
     log_info "Specified SPMC path: ${SPMC_PATH:-'(not specified)'}"
-    log_info "Available directories in parent:"
-    ls -la "${BENCHMARK_DIR}/.." | grep ^d || log_warning "Cannot list parent directory"
+    log_info "Current LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-'(not set)'}"
+    log_info "Available directories in workspace:"
+    ls -la "${WORKSPACE_DIR}" | grep ^d || log_warning "Cannot list workspace directory"
     log_info "============================="
 }
 
 # Function to detect available SPMC types
 detect_spmc_types() {
-    local workspace_dir
-    workspace_dir=$(cd "${BENCHMARK_DIR}/.." && pwd)
     local spmc_types=()
     
-    log_info "Scanning for SPMC implementations in: $workspace_dir"
+    log_info "Scanning for SPMC implementations in: $WORKSPACE_DIR"
     
     # Look for directories that contain SPMC implementations
-    for dir in "${workspace_dir}"/spmc_*/; do
+    for dir in "${WORKSPACE_DIR}"/spmc_*/; do
         if [[ -d "$dir" && -f "$dir/Makefile" ]]; then
             local dirname=$(basename "$dir")
             spmc_types+=("$dirname")
@@ -176,7 +233,7 @@ detect_spmc_types() {
     done
     
     # Also check for other common SPMC directory patterns
-    for dir in "${workspace_dir}"/spmc*/; do
+    for dir in "${WORKSPACE_DIR}"/spmc*/; do
         if [[ -d "$dir" && -f "$dir/Makefile" ]]; then
             local dirname=$(basename "$dir")
             # Avoid duplicates
@@ -207,8 +264,8 @@ select_spmc_implementation() {
             # Relative path - try from benchmark directory first
             if [[ -d "${BENCHMARK_DIR}/$SPMC_PATH" ]]; then
                 resolved_path="${BENCHMARK_DIR}/$SPMC_PATH"
-            elif [[ -d "${BENCHMARK_DIR}/../$SPMC_PATH" ]]; then
-                resolved_path="${BENCHMARK_DIR}/../$SPMC_PATH"
+            elif [[ -d "${WORKSPACE_DIR}/$SPMC_PATH" ]]; then
+                resolved_path="${WORKSPACE_DIR}/$SPMC_PATH"
             else
                 # Try to resolve from current directory
                 resolved_path=$(realpath "$SPMC_PATH" 2>/dev/null || echo "$SPMC_PATH")
@@ -220,6 +277,7 @@ select_spmc_implementation() {
             log_error "Resolved to: $resolved_path"
             log_info "Current working directory: $(pwd)"
             log_info "Benchmark directory: $BENCHMARK_DIR"
+            log_info "Workspace directory: $WORKSPACE_DIR"
             exit 1
         fi
         
@@ -237,7 +295,7 @@ select_spmc_implementation() {
         log_info "Use -s option to specify SPMC implementation path"
         exit 1
     elif [[ ${#available_types[@]} -eq 1 ]]; then
-        local spmc_path="${BENCHMARK_DIR}/../${available_types[0]}"
+        local spmc_path="${WORKSPACE_DIR}/${available_types[0]}"
         log_info "Found single SPMC implementation: ${available_types[0]}"
         echo "$spmc_path"
     else
@@ -250,7 +308,7 @@ select_spmc_implementation() {
             read -p "Select SPMC type (1-${#available_types[@]}): " choice
             if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#available_types[@]} ]]; then
                 local selected_type="${available_types[$((choice-1))]}"
-                local spmc_path="${BENCHMARK_DIR}/../$selected_type"
+                local spmc_path="${WORKSPACE_DIR}/$selected_type"
                 echo "$spmc_path"
                 break
             else
@@ -372,6 +430,49 @@ build_spmc_implementation() {
     fi
 }
 
+# Function to build and link SPMC object with benchmark object
+build_and_link_spmc_benchmark() {
+    local spmc_path="$1"
+    local spmc_name=$(basename "$spmc_path")
+    local benchmark_obj="${BENCHMARK_DIR}/examples/spmc_benchmark.o"
+    local exe_out="${BENCHMARK_DIR}/bin/benchmark_${spmc_name}"
+
+    # Tìm file object ở hai vị trí phổ biến
+    local spmc_obj=""
+    if [[ -f "${spmc_path}/build/spmc_queue.o" ]]; then
+        spmc_obj="${spmc_path}/build/spmc_queue.o"
+    elif [[ -f "${spmc_path}/spmc_queue.o" ]]; then
+        spmc_obj="${spmc_path}/spmc_queue.o"
+    else
+        log_error "SPMC object file not found in build/ or root: ${spmc_path}"
+        return 1
+    fi
+
+    log_info "Building benchmark object: $benchmark_obj"
+    mkdir -p "${BENCHMARK_DIR}/bin"
+    mpicc -c "${BENCHMARK_DIR}/examples/spmc_benchmark.c" -I"$spmc_path" -I"$spmc_path/src" -I"${WORKSPACE_DIR}/mpi_lib/include" -o "$benchmark_obj"
+    if [[ $? -ne 0 ]]; then
+        log_error "Failed to build benchmark object file"
+        return 1
+    fi
+
+    log_info "Linking $benchmark_obj + $spmc_obj -> $exe_out"
+    mpicc "$benchmark_obj" "$spmc_obj" \
+        -o "$exe_out" \
+        -I"$spmc_path" \
+        -I"$spmc_path/src" \
+        -I"${WORKSPACE_DIR}/mpi_lib/include" \
+        -L"${WORKSPACE_DIR}/mpi_lib/lib" \
+        -L"${BENCHMARK_DIR}/lib" \
+        -lbenchmark -lmpi_wrapper -lmpi
+    if [[ $? -ne 0 ]]; then
+        log_error "Failed to link benchmark executable"
+        return 1
+    fi
+    log_success "Benchmark executable created: $exe_out"
+    echo "$exe_out"
+}
+
 # Function to run a single benchmark
 run_benchmark() {
     local test_type="$1"
@@ -381,37 +482,42 @@ run_benchmark() {
     local spmc_name=$(basename "$spmc_path")
     local timestamp=$(date +"%Y%m%d_%H%M%S")
     local log_file="${LOG_DIR}/benchmark_${test_type}_${spmc_name}_${num_procs}procs_${timestamp}.log"
-    
+
     log_info "Running $test_type benchmark with $num_procs processes for $spmc_name..."
-    
-    # Find the SPMC executable
-    local spmc_executable=$(find_spmc_executable "$spmc_path")
+
+    # Build and link SPMC object with benchmark object
+    local spmc_executable=$(build_and_link_spmc_benchmark "$spmc_path")
     if [[ -z "$spmc_executable" ]]; then
-        log_error "No executable found in SPMC implementation: $spmc_path"
-        log_info "Please ensure your SPMC implementation builds an executable"
+        log_error "Failed to build benchmark executable for $spmc_name"
         return 1
     fi
-    
+
     log_info "Using executable: $spmc_executable"
     
+    # Check library dependencies before running
+    log_info "Checking library dependencies..."
+    if ! check_library_dependencies "$spmc_executable"; then
+        log_error "Library dependency check failed"
+        log_info "Current LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+        log_info "Try installing missing libraries or check library paths"
+        return 1
+    fi
+
     # Build MPI command
     local mpi_cmd="mpirun"
-    
-    # Add WSL/root permissions if needed
     if [[ -n "${WSL_DISTRO_NAME}" ]] || [[ "$EUID" -eq 0 ]]; then
         mpi_cmd="$mpi_cmd --allow-run-as-root"
     fi
-    
     mpi_cmd="$mpi_cmd -np $num_procs $spmc_executable $test_type"
-    
+
     # Execute benchmark
     if [[ "$VERBOSE" == "true" ]]; then
         log_info "Executing: $mpi_cmd"
         $mpi_cmd 2>&1 | tee "$log_file"
     else
-        $mpi_cmd > "$log_file" 2>&1
+        OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 $mpi_cmd > "$log_file" 2>&1
     fi
-    
+
     local exit_code=$?
     
     if [[ $exit_code -eq 0 ]]; then
@@ -513,6 +619,21 @@ main() {
     print_separator
     log_info "SPMC Queue Benchmark Runner"
     print_separator
+    
+    # If only checking libraries, do that and exit
+    if [[ "$CHECK_LIBS" == "true" ]]; then
+        log_info "Library check mode enabled"
+        debug_paths
+        # Try to find any existing executable to check
+        local test_exe="${BENCHMARK_DIR}/bin/benchmark_spmc_2004"
+        if [[ -f "$test_exe" ]]; then
+            check_library_dependencies "$test_exe"
+        else
+            log_info "No existing executable found for library check"
+            log_info "Build an executable first, then run with --check-libs"
+        fi
+        exit 0
+    fi
     
     # Debug path information if verbose
     if [[ "$VERBOSE" == "true" ]]; then

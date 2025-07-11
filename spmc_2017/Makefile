@@ -22,6 +22,7 @@ LDFLAGS += -Wl,-rpath,$(MPI_LIB_DIR)/lib
 
 # Source files
 SOURCES = $(SRC_DIR)/main_spmc.c $(SRC_DIR)/spmc_queue.c
+# SOURCES =  $(SRC_DIR)/spmc_queue.c
 OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 # Target executable

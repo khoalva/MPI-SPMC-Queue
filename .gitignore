@@ -62,3 +62,4 @@ core.*
 # Custom ignore for this project
 /benchmark/examples/spmc_benchmark
 /benchmark/lib/
+/benchmark/bin/
