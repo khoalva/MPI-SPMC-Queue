@@ -25,7 +25,7 @@ SOURCES = $(SRC_DIR)/main_spmc.c $(SRC_DIR)/spmc_queue.c
 OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 # Target executable
-TARGET = $(BIN_DIR)/spmc_queue_mpilib
+TARGET = $(BIN_DIR)/spmc_queue
 
 .PHONY: all clean dirs run-2 run-4 run-8 debug release check-deps help
 

@@ -9,7 +9,7 @@ set -e
 BENCHMARK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULTS_DIR="${BENCHMARK_DIR}/results"
 LOG_DIR="${BENCHMARK_DIR}/logs"
-EXAMPLE_BIN="${BENCHMARK_DIR}/examples/spmc_benchmark"
+# Remove hardcoded EXAMPLE_BIN - will be set dynamically based on SPMC implementation
 
 # Colors for output
 RED='\033[0;31m'
@@ -146,25 +146,43 @@ fi
 # Create output directories
 mkdir -p "$OUTPUT_DIR" "$LOG_DIR"
 
+# Function to debug path resolution
+debug_paths() {
+    log_info "=== Path Debug Information ==="
+    log_info "Current working directory: $(pwd)"
+    log_info "Benchmark directory: $BENCHMARK_DIR"
+    log_info "Parent directory: $(cd "${BENCHMARK_DIR}/.." && pwd)"
+    log_info "Specified SPMC path: ${SPMC_PATH:-'(not specified)'}"
+    log_info "Available directories in parent:"
+    ls -la "${BENCHMARK_DIR}/.." | grep ^d || log_warning "Cannot list parent directory"
+    log_info "============================="
+}
+
 # Function to detect available SPMC types
 detect_spmc_types() {
-    local workspace_dir="${BENCHMARK_DIR}/.."
+    local workspace_dir
+    workspace_dir=$(cd "${BENCHMARK_DIR}/.." && pwd)
     local spmc_types=()
+    
+    log_info "Scanning for SPMC implementations in: $workspace_dir"
     
     # Look for directories that contain SPMC implementations
     for dir in "${workspace_dir}"/spmc_*/; do
-        if [[ -d "$dir" ]]; then
+        if [[ -d "$dir" && -f "$dir/Makefile" ]]; then
             local dirname=$(basename "$dir")
             spmc_types+=("$dirname")
+            log_info "Found SPMC implementation: $dirname"
         fi
     done
     
     # Also check for other common SPMC directory patterns
     for dir in "${workspace_dir}"/spmc*/; do
-        if [[ -d "$dir" ]]; then
+        if [[ -d "$dir" && -f "$dir/Makefile" ]]; then
             local dirname=$(basename "$dir")
-            if [[ "$dirname" != "spmc" && "$dirname" != spmc_* ]]; then
+            # Avoid duplicates
+            if [[ ! " ${spmc_types[@]} " =~ " ${dirname} " ]]; then
                 spmc_types+=("$dirname")
+                log_info "Found SPMC implementation: $dirname"
             fi
         fi
     done
@@ -176,26 +194,39 @@ detect_spmc_types() {
 select_spmc_implementation() {
     # If SPMC path was specified via command line, validate and use it
     if [[ -n "$SPMC_PATH" ]]; then
-        # Handle relative paths properly
+        local resolved_path=""
+        
+        # Handle different path formats
         if [[ "$SPMC_PATH" == /* ]]; then
             # Absolute path
-            local abs_path="$SPMC_PATH"
+            resolved_path="$SPMC_PATH"
+        elif [[ "$SPMC_PATH" == ../* ]] || [[ "$SPMC_PATH" == ./* ]]; then
+            # Relative path from current directory
+            resolved_path=$(cd "$(dirname "$SPMC_PATH")" && pwd)/$(basename "$SPMC_PATH")
         else
-            # Relative path - resolve from current directory
-            local abs_path=$(realpath "$SPMC_PATH" 2>/dev/null || echo "$SPMC_PATH")
+            # Relative path - try from benchmark directory first
+            if [[ -d "${BENCHMARK_DIR}/$SPMC_PATH" ]]; then
+                resolved_path="${BENCHMARK_DIR}/$SPMC_PATH"
+            elif [[ -d "${BENCHMARK_DIR}/../$SPMC_PATH" ]]; then
+                resolved_path="${BENCHMARK_DIR}/../$SPMC_PATH"
+            else
+                # Try to resolve from current directory
+                resolved_path=$(realpath "$SPMC_PATH" 2>/dev/null || echo "$SPMC_PATH")
+            fi
         fi
         
-        if [[ ! -d "$abs_path" ]]; then
+        if [[ ! -d "$resolved_path" ]]; then
             log_error "Specified SPMC path '$SPMC_PATH' does not exist"
-            log_error "Resolved to: $abs_path"
+            log_error "Resolved to: $resolved_path"
+            log_info "Current working directory: $(pwd)"
+            log_info "Benchmark directory: $BENCHMARK_DIR"
             exit 1
         fi
         
-        local spmc_name=$(basename "$abs_path")
-        log_info "Using specified SPMC implementation: $spmc_name at $abs_path"
-        # Force output to be flushed before returning
-        sleep 0.1
-        echo "$abs_path"
+        local spmc_name=$(basename "$resolved_path")
+        log_info "Using specified SPMC implementation: $spmc_name"
+        log_info "Resolved path: $resolved_path"
+        echo "$resolved_path"
         return
     fi
     
@@ -227,6 +258,53 @@ select_spmc_implementation() {
             fi
         done
     fi
+}
+
+# Function to find SPMC executable
+find_spmc_executable() {
+    local spmc_path="$1"
+    local spmc_name=$(basename "$spmc_path")
+    
+    # Common executable names to look for
+    local possible_names=(
+        "spmc_benchmark"
+        "benchmark"
+        "spmc_test"
+        "test"
+        "main"
+        "spmc"
+        "queue_spmc"
+        "spmc_queue"
+        "${spmc_name}_benchmark"
+        "${spmc_name}_test"
+        "${spmc_name}"
+    )
+    
+    # Look for executables in the SPMC directory
+    for name in "${possible_names[@]}"; do
+        local exe_path="${spmc_path}/${name}"
+        if [[ -x "$exe_path" ]]; then
+            echo "$exe_path"
+            return 0
+        fi
+    done
+    
+    # Look for executables in common subdirectories
+    for subdir in "examples" "bin" "build" "test"; do
+        if [[ -d "${spmc_path}/${subdir}" ]]; then
+            for name in "${possible_names[@]}"; do
+                local exe_path="${spmc_path}/${subdir}/${name}"
+                if [[ -x "$exe_path" ]]; then
+                    echo "$exe_path"
+                    return 0
+                fi
+            done
+        fi
+    done
+    
+    # If not found, return empty string
+    echo ""
+    return 1
 }
 
 # Function to build SPMC implementation
@@ -262,16 +340,38 @@ build_spmc_implementation() {
         return 1
     }
     
-    if make clean && make all; then
+    # Try different build targets
+    local build_targets=("all" "examples" "benchmark" "test")
+    local build_success=false
+    
+    # Clean first
+    if make clean 2>/dev/null; then
+        log_info "Cleaned previous build artifacts"
+    fi
+    
+    # Try each build target
+    for target in "${build_targets[@]}"; do
+        log_info "Attempting to build target: $target"
+        if make "$target" 2>/dev/null; then
+            log_success "Successfully built target: $target"
+            build_success=true
+            break
+        else
+            log_warning "Failed to build target: $target"
+        fi
+    done
+    
+    cd "$BENCHMARK_DIR"
+    
+    if [[ "$build_success" == "true" ]]; then
         log_success "SPMC implementation built successfully"
-        cd "$BENCHMARK_DIR"
         return 0
     else
-        log_error "Build failed with make command"
-        cd "$BENCHMARK_DIR"
+        log_error "All build attempts failed"
         return 1
     fi
 }
+
 # Function to run a single benchmark
 run_benchmark() {
     local test_type="$1"
@@ -284,6 +384,16 @@ run_benchmark() {
     
     log_info "Running $test_type benchmark with $num_procs processes for $spmc_name..."
     
+    # Find the SPMC executable
+    local spmc_executable=$(find_spmc_executable "$spmc_path")
+    if [[ -z "$spmc_executable" ]]; then
+        log_error "No executable found in SPMC implementation: $spmc_path"
+        log_info "Please ensure your SPMC implementation builds an executable"
+        return 1
+    fi
+    
+    log_info "Using executable: $spmc_executable"
+    
     # Build MPI command
     local mpi_cmd="mpirun"
     
@@ -292,7 +402,7 @@ run_benchmark() {
         mpi_cmd="$mpi_cmd --allow-run-as-root"
     fi
     
-    mpi_cmd="$mpi_cmd -np $num_procs $EXAMPLE_BIN $test_type"
+    mpi_cmd="$mpi_cmd -np $num_procs $spmc_executable $test_type"
     
     # Execute benchmark
     if [[ "$VERBOSE" == "true" ]]; then
@@ -307,18 +417,33 @@ run_benchmark() {
     if [[ $exit_code -eq 0 ]]; then
         log_success "$test_type benchmark completed successfully"
         
-        # Always try to move CSV results if they exist
+        # Look for CSV results in multiple locations
         local csv_file="benchmark_${test_type}_${num_procs}procs.csv"
         local new_csv_name="${spmc_name}_${test_type}_${num_procs}procs_${timestamp}.csv"
+        local csv_found=false
         
-        # Check if CSV file exists in benchmark directory (most likely location)
-        if [[ -f "${BENCHMARK_DIR}/$csv_file" ]]; then
-            mv "${BENCHMARK_DIR}/$csv_file" "${session_folder}/$new_csv_name"
-            log_info "Results saved to: ${session_folder}/$new_csv_name"
-        # Also check examples directory (in case it's created there)
-        elif [[ -f "${BENCHMARK_DIR}/examples/$csv_file" ]]; then
-            mv "${BENCHMARK_DIR}/examples/$csv_file" "${session_folder}/$new_csv_name"
-            log_info "Results saved to: ${session_folder}/$new_csv_name"
+        # Possible locations for CSV files
+        local search_paths=(
+            "${BENCHMARK_DIR}/$csv_file"
+            "${BENCHMARK_DIR}/examples/$csv_file"
+            "${spmc_path}/$csv_file"
+            "${spmc_path}/examples/$csv_file"
+            "${spmc_path}/bin/$csv_file"
+            "${spmc_path}/build/$csv_file"
+            "$(dirname "$spmc_executable")/$csv_file"
+        )
+        
+        for csv_path in "${search_paths[@]}"; do
+            if [[ -f "$csv_path" ]]; then
+                mv "$csv_path" "${session_folder}/$new_csv_name"
+                log_info "Results saved to: ${session_folder}/$new_csv_name"
+                csv_found=true
+                break
+            fi
+        done
+        
+        if [[ "$csv_found" == "false" ]]; then
+            log_warning "CSV results file not found in expected locations"
         fi
     else
         log_error "$test_type benchmark failed (exit code: $exit_code)"
@@ -389,6 +514,11 @@ main() {
     log_info "SPMC Queue Benchmark Runner"
     print_separator
     
+    # Debug path information if verbose
+    if [[ "$VERBOSE" == "true" ]]; then
+        debug_paths
+    fi
+    
     # Detect and select SPMC implementation
     local spmc_path=$(select_spmc_implementation)
     local spmc_name=$(basename "$spmc_path")
@@ -404,25 +534,15 @@ main() {
         echo ""
     fi
     
-    # Build benchmark if needed
-    if [[ "$NO_BUILD" != "true" ]]; then
-        log_info "Building benchmark library and examples..."
-        cd "$BENCHMARK_DIR"
-        if make clean && make all; then
-            log_success "Build completed successfully"
-        else
-            log_error "Build failed"
-            exit 1
-        fi
-        echo ""
-    fi
-    
-    # Check if benchmark executable exists
-    if [[ ! -x "$EXAMPLE_BIN" ]]; then
-        log_error "Benchmark executable not found: $EXAMPLE_BIN"
-        log_error "Run 'make examples' to build the benchmark program"
+    # Find and verify SPMC executable
+    local spmc_executable=$(find_spmc_executable "$spmc_path")
+    if [[ -z "$spmc_executable" ]]; then
+        log_error "No executable found in SPMC implementation: $spmc_path"
+        log_error "Please ensure your SPMC implementation builds an executable"
         exit 1
     fi
+    
+    log_info "Found SPMC executable: $spmc_executable"
     
     # Create output directory
     mkdir -p "$OUTPUT_DIR"
