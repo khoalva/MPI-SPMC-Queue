@@ -289,7 +289,7 @@ select_spmc_implementation() {
     fi
     
     local available_types=($(detect_spmc_types))
-    
+
     if [[ ${#available_types[@]} -eq 0 ]]; then
         log_error "No SPMC implementations found in workspace"
         log_info "Use -s option to specify SPMC implementation path"
@@ -301,9 +301,9 @@ select_spmc_implementation() {
     else
         log_info "Multiple SPMC implementations found:"
         for i in "${!available_types[@]}"; do
-            echo "  $((i+1)). ${available_types[$i]}"
+            echo "  $((i+1)). ${available_types[$i]}" >&2
         done
-        
+
         while true; do
             read -p "Select SPMC type (1-${#available_types[@]}): " choice
             if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#available_types[@]} ]]; then
