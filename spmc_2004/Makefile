@@ -1,66 +1,101 @@
-CC=mpicc
-CFLAGS=-O2 -Wall
-MPI_LIB_DIR=../mpi_lib
-MPI_LIB_INCLUDE=$(MPI_LIB_DIR)/include
-MPI_LIB_LIB=$(MPI_LIB_DIR)/lib
-INCLUDES=-I$(MPI_LIB_INCLUDE)
-LDFLAGS=-L$(MPI_LIB_LIB) -Wl,-rpath,$(MPI_LIB_LIB) -lmpi_wrapper
+# Makefile for SPMC Queue with mpi_lib
+CC = mpicc
+CFLAGS = -Wall -Wextra -O2 -std=c99 -g
+LDFLAGS = -lm
 
-# SPMC sources
-SOURCES=main_spmc.c spmc_queue.c
+# Directories
+SRC_DIR = src
+BUILD_DIR = build
+BIN_DIR = bin
+MPI_LIB_DIR = ../mpi_lib
+MPI_LIB_INCLUDE = $(MPI_LIB_DIR)/include
+MPI_LIB_LIB = $(MPI_LIB_DIR)/lib
 
-# Object files
-OBJECTS=$(SOURCES:.c=.o)
+# Include paths
+INCLUDES = -I$(SRC_DIR) -I$(MPI_LIB_INCLUDE)
 
-# Executable
-EXECUTABLE=queue_spmc
+# Library paths
+LIBS = -L$(MPI_LIB_DIR)/lib -lmpi_wrapper
 
-all: check_lib $(EXECUTABLE)
+# Add rpath to link shared libraries properly
+LDFLAGS += -Wl,-rpath,$(MPI_LIB_DIR)/lib
 
-# Check if MPI library exists
-check_lib:
-	@if [ ! -f $(MPI_LIB_LIB)/libmpi_wrapper.a ]; then \
-		echo "MPI library not found. Building it..."; \
-		make -C $(MPI_LIB_DIR); \
-	fi
+# Source files
+SOURCES = $(SRC_DIR)/main_spmc.c $(SRC_DIR)/spmc_queue.c
+# SOURCES =  $(SRC_DIR)/spmc_queue.c
+OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
-# SPMC implementation
-$(EXECUTABLE): $(OBJECTS) check_lib
-	$(CC) $(OBJECTS) $(LDFLAGS) -o $@
+# Target executable
+TARGET = $(BIN_DIR)/spmc_queue
 
-# Compilation rules
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+.PHONY: all clean dirs run-2 run-4 run-8 debug release check-deps help
 
-# SPMC implementation needs include path
-main_spmc.o: main_spmc.c spmc_queue.h
+all: dirs $(TARGET)
+
+# Create directories
+dirs:
+	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
+
+# Build target executable
+$(TARGET): $(OBJECTS)
+	@echo "Linking $@..."
+	$(CC) $(OBJECTS) $(LIBS) $(LDFLAGS) -o $@
+	@echo "Build complete: $@"
+
+# Compile source files
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
+	@echo "Compiling $<..."
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
-spmc_queue.o: spmc_queue.c spmc_queue.h
-	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
-
-# Build MPI library
-build_lib:
-	make -C $(MPI_LIB_DIR)
-
-# Clean everything
+# Clean build files
 clean:
-	rm -f $(OBJECTS) $(EXECUTABLE)
+	rm -rf $(BUILD_DIR) $(BIN_DIR)
+	@echo "Clean complete"
 
-# Clean including library
-distclean: clean
-	make -C $(MPI_LIB_DIR) clean
+# Run with different process counts (with proper library path)
+run-2: $(TARGET)
+	@echo "Running with 2 processes (1 producer, 1 consumer)..."
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun --allow-run-as-root -np 2 $(TARGET)
+
+run-4: $(TARGET)
+	@echo "Running with 4 processes (1 producer, 3 consumers)..."
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun --allow-run-as-root -np 4 $(TARGET)
+
+run-8: $(TARGET)
+	@echo "Running with 8 processes (1 producer, 7 consumers)..."
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun --allow-run-as-root -np 8 $(TARGET)
+
+# Debug version
+debug: CFLAGS += -DDEBUG -g -O0
+debug: $(TARGET)
+
+# Performance version
+release: CFLAGS += -O3 -DNDEBUG
+release: clean $(TARGET)
+
+# Check for dependencies
+check-deps:
+	@echo "Checking dependencies..."
+	@which mpicc > /dev/null || (echo "Error: mpicc not found. Install MPI development package." && exit 1)
+	@test -f $(MPI_LIB_INCLUDE)/mpi_lib.h || (echo "Error: mpi_lib.h not found in $(MPI_LIB_INCLUDE)" && exit 1)
+	@test -f $(MPI_LIB_LIB)/libmpi_wrapper.a || (echo "Error: libmpi_wrapper.a not found in $(MPI_LIB_LIB)" && exit 1)
+	@echo "All dependencies found"
 
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  all           - Build SPMC implementation"
-	@echo "  queue_spmc    - Build SPMC implementation using new MPI library"
-	@echo "  build_lib     - Build MPI library"
-	@echo "  clean         - Clean build artifacts"
-	@echo "  distclean     - Clean everything including library"
-	@echo "  help          - Show this help"
+	@echo "  all        - Build the program"
+	@echo "  clean      - Remove build files"
+	@echo "  debug      - Build with debug flags"
+	@echo "  release    - Build optimized version"
+	@echo "  run-2      - Run with 2 processes"
+	@echo "  run-4      - Run with 4 processes" 
+	@echo "  run-8      - Run with 8 processes"
+	@echo "  check-deps - Check if dependencies are available"
+	@echo "  help       - Show this help message"
 
-.PHONY: all check_lib build_lib clean distclean help
-
-	
+# Directory structure:
+# - include/  : Header files (*.h)
+# - src/      : Source files (*.c)
+# - build/    : Object files (*.o)
+# - bin/      : Executable files

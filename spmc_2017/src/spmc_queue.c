@@ -95,27 +95,26 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int item) {
 
     // Only producer should enqueue
     if (!mpi_is_root(&queue->mpi_ctx)) return -1;
-    
-    // Start passive target epoch for producer
-    // MPI_TRY(mpi_win_lock(MPI_LOCK_EXCLUSIVE, 0, 0, &queue->win_queue));
 
     int current_tail = queue->q.tail;
     int next_tail = (current_tail + 1) % queue->q.size;
-    
+
     // Check if queue is full
     if (next_tail == queue->q.head) {
-        // MPI_TRY(mpi_win_unlock(0, &queue->win_queue));
-
+        printf("[ENQUEUE][rank %d] Queue is full! tail=%d, head=%d\n", mpi_get_rank(&queue->mpi_ctx), current_tail, queue->q.head);
         return -1; // Queue is full
     }
-    
+
     // Fill the cell (producer can access directly)
     queue->q.cells[current_tail].rank = mpi_get_rank(&queue->mpi_ctx);
     queue->q.cells[current_tail].gap = 0;
     queue->q.cells[current_tail].data = item;
-    
+
     // Update tail pointer
     queue->q.tail = next_tail;
+
+    // Log enqueue action
+    printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | new tail=%d, head=%d\n", mpi_get_rank(&queue->mpi_ctx), item, current_tail, queue->q.tail, queue->q.head);
 
     // Đồng bộ metadata lên window để consumer thấy được trạng thái mới nhất
     mpi_put(&queue->q, sizeof(queue_t), MPI_BYTE, 0, 0, &queue->win_queue);
@@ -130,7 +129,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
 
     // Start passive target epoch for this consumer
     MPI_TRY(mpi_win_lock(MPI_LOCK_SHARED, 0, 0, &queue->win_queue));
-    
+
     // For consumers, we need to access queue data through MPI window
     queue_t local_queue;
     if (!mpi_is_root(&queue->mpi_ctx)) {
@@ -141,7 +140,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
             return -1;
         }
     }
-    
+
     // Atomic fetch-and-op để lấy và tăng head
     int one = 1;
     int my_head = -1;
@@ -159,6 +158,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
         // Wrap-around chỉ số head
         my_head = my_head % queue_size;
         if (my_head == tail) {
+            printf("[DEQUEUE][rank %d] Queue is empty! head=%d, tail=%d\n", mpi_get_rank(&queue->mpi_ctx), my_head, tail);
             mpi_win_unlock(0, &queue->win_queue);
             return -1; // Queue is empty
         }
@@ -179,12 +179,16 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
 
     // Check if this item was already dequeued
     if (cell.rank == EMPTY_CELL) {
+        printf("[DEQUEUE][rank %d] Cell already empty at pos %d\n", mpi_get_rank(&queue->mpi_ctx), my_head);
         mpi_win_unlock(0, &queue->win_queue);
         return -1;
     }
 
     // Copy the data
     int item = cell.data;
+
+    // Log dequeue action
+    printf("[DEQUEUE][rank %d] Dequeued item: %d at pos %d | head=%d, tail=%d\n", mpi_get_rank(&queue->mpi_ctx), item, my_head, my_head, local_queue.tail);
 
     // Mark cell as consumed and update queue state
     cell.rank = EMPTY_CELL;
