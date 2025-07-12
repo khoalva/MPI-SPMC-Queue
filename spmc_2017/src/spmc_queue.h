@@ -31,16 +31,6 @@ typedef struct {
 } spmc_queue_t;
 
 
-// Producer operations (Single Producer)
-bool spmc_enqueue(spmc_queue_t *queue, int item, mpi_window_t *win);
-
-// Consumer operations (Multiple Consumers) 
-bool spmc_dequeue(spmc_queue_t *queue, int consumer_id, int *item, mpi_window_t *win);
-
-// Utility functions
-void spmc_simulate_work(int time_ms);
-bool spmc_is_producer(mpi_context_t *ctx);
-
 // Bắt buộc cho benchmark chung
 int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]);
 void spmc_queue_destroy(spmc_queue_t *queue);
