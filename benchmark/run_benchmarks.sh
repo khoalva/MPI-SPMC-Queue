@@ -522,12 +522,13 @@ run_benchmark() {
     
     if [[ $exit_code -eq 0 ]]; then
         log_success "$test_type benchmark completed successfully"
-        
+        log_info "Benchmark log file: $log_file"
+
         # Look for CSV results in multiple locations
         local csv_file="benchmark_${test_type}_${num_procs}procs.csv"
         local new_csv_name="${spmc_name}_${test_type}_${num_procs}procs_${timestamp}.csv"
         local csv_found=false
-        
+
         # Possible locations for CSV files
         local search_paths=(
             "${BENCHMARK_DIR}/$csv_file"
@@ -538,7 +539,7 @@ run_benchmark() {
             "${spmc_path}/build/$csv_file"
             "$(dirname "$spmc_executable")/$csv_file"
         )
-        
+
         for csv_path in "${search_paths[@]}"; do
             if [[ -f "$csv_path" ]]; then
                 mv "$csv_path" "${session_folder}/$new_csv_name"
@@ -547,7 +548,7 @@ run_benchmark() {
                 break
             fi
         done
-        
+
         if [[ "$csv_found" == "false" ]]; then
             log_warning "CSV results file not found in expected locations"
         fi

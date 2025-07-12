@@ -117,12 +117,6 @@ make all                    # Creates benchmark library & tools
 
 ### Available Test Types
 
-#### Quick Commands
-```bash
-# Fast validation (1-2 minutes)
-./quick_test.sh                    # 3 processes
-./quick_test.sh 4                  # 4 processes
-
 # Performance benchmarks
 ./run_benchmarks.sh quick --processes 3       # Quick test
 ./run_benchmarks.sh throughput --processes 4  # Max performance
