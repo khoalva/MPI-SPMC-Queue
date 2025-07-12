@@ -16,17 +16,20 @@ typedef struct {
 } spmc_cell_t;
 
 typedef struct {
-    int size;                // Queue size
-    int head;               // Head pointer
-    int tail;               // Tail pointer  
-    int lastItemDequeued;   // Last dequeued item index
-    mpi_context_t mpi_ctx; // MPI context for communication
-    spmc_cell_t* cells; // Array of cells for the queue
+    spmc_cell_t* cells; // Pointer to cells array
+    int head;
+    int tail;
+    int size;
+    int lastItemDequeued;
+} queue_t;
 
-    mpi_window_t win_cells; // MPI window for cells
-    mpi_window_t win_head; // MPI window for head pointer
-    mpi_window_t win_tail; // MPI window for tail pointer
+typedef struct {
+    mpi_context_t mpi_ctx; // MPI context for communication
+
+    queue_t q; // Queue metadata
+    mpi_window_t win_queue;
 } spmc_queue_t;
+
 
 // Producer operations (Single Producer)
 bool spmc_enqueue(spmc_queue_t *queue, int item, mpi_window_t *win);
