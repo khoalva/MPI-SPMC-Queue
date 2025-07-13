@@ -184,3 +184,15 @@ void spmc_queue_print_stats(spmc_queue_t *queue) {
 int spmc_queue_is_enqueuer(spmc_queue_t *queue) {
     return queue && mpi_is_root(&queue->mpi_ctx);
 }
+
+size_t spmc_queue_get_capacity_bytes(const spmc_queue_t *queue) {
+    if (!queue) return 0;
+    // Tổng dung lượng bộ nhớ cho queue: head + items + các biến metadata
+    // head: MAX_ROWS * sizeof(int)
+    // items: MAX_ROWS * MAX_COLS * sizeof(int)
+    // metadata: row, eng_row, tail (3 int)
+    size_t meta_bytes = 3 * sizeof(int);
+    size_t head_bytes = MAX_ROWS * sizeof(int);
+    size_t items_bytes = MAX_ROWS * MAX_COLS * sizeof(int);
+    return meta_bytes + head_bytes + items_bytes;
+}

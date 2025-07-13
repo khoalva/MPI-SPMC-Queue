@@ -44,6 +44,7 @@ typedef struct {
     long total_items_produced;      // Total items enqueued
     long total_items_consumed;      // Total items dequeued
     long memory_peak_kb;            // Peak memory usage
+    long queue_capacity_bytes;
     int load_balance_score;         // Load balancing effectiveness (0-100)
 } benchmark_results_t;
 

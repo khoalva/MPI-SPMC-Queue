@@ -6,9 +6,9 @@
 // Constants for special values
 #define L -1 // ⊥ (empty cell)
 #define T -2 // ⊤ (dequeued cell)
-#define MAX_ROWS 1000 // Maximum rows in ITEMS
-#define MAX_COLS 1000 // Maximum columns in ITEMS
-#define MAX_VALUE 1000 // Maximum value to enqueue
+#define MAX_ROWS 1028 // Maximum rows in ITEMS
+#define MAX_COLS 1028 // Maximum columns in ITEMS
+#define MAX_VALUE 1028 // Maximum value to enqueue
 
 // Queue structure using MPI wrapper library
 typedef struct {
@@ -30,5 +30,5 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value);
 int spmc_queue_dequeue(spmc_queue_t *queue);
 void spmc_queue_print_stats(spmc_queue_t *queue);
 int spmc_queue_is_enqueuer(spmc_queue_t *queue);
-
+size_t spmc_queue_get_capacity_bytes(const spmc_queue_t *queue);
 #endif // SPMC_QUEUE_H

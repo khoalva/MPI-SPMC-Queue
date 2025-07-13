@@ -300,12 +300,18 @@ void benchmark_print_report(const benchmark_ctx_t *ctx) {
     }
     
     if (ctx->config.enable_memory_tracking) {
-        printf("\\nMemory Usage:\\n");
-        printf("  Peak memory:             %ld KB\\n", ctx->results.memory_peak_kb);
+        printf("\nMemory Usage:\n");
+        printf("  Peak memory:             %ld KB\n", ctx->results.memory_peak_kb);
     }
-    
+
+    // Space complexity
+    if (ctx->results.queue_capacity_bytes > 0) {
+        printf("\nQueue Space Complexity:\n");
+        printf("  Queue capacity (bytes):  %ld\n", ctx->results.queue_capacity_bytes);
+    }
+
     benchmark_print_separator();
-    printf("\\n");
+    printf("\n");
 }
 
 /**
@@ -323,16 +329,18 @@ int benchmark_export_csv(const benchmark_ctx_t *ctx, const char *filename) {
     // Write CSV header
     fprintf(fp, "Test_Name,MPI_Size,Total_Time_Sec,Items_Produced,Items_Consumed,");
     fprintf(fp, "Throughput_Items_Per_Sec,Avg_Enqueue_Latency_Us,Max_Enqueue_Latency_Us,");
-    fprintf(fp, "Avg_Dequeue_Latency_Us,Max_Dequeue_Latency_Us,Memory_Peak_KB,Load_Balance_Score\n");
-    
+    fprintf(fp, "Avg_Dequeue_Latency_Us,Max_Dequeue_Latency_Us,Memory_Peak_KB,Load_Balance_Score,");
+    fprintf(fp, "Queue_Capacity_Bytes\n");
+
     // Write data with better formatting
-    fprintf(fp, "\"%s\",%d,%.3f,%ld,%ld,%.2f,%.2f,%.2f,%.2f,%.2f,%ld,%d\n",
+    fprintf(fp, "\"%s\",%d,%.3f,%ld,%ld,%.2f,%.2f,%.2f,%.2f,%.2f,%ld,%d,%ld\n",
             ctx->config.test_name, ctx->mpi_size, ctx->results.total_time_sec,
             ctx->results.total_items_produced, ctx->results.total_items_consumed,
             ctx->results.throughput_items_per_sec, ctx->results.avg_enqueue_latency_us,
             ctx->results.max_enqueue_latency_us, ctx->results.avg_dequeue_latency_us,
             ctx->results.max_dequeue_latency_us, ctx->results.memory_peak_kb,
-            ctx->results.load_balance_score);
+            ctx->results.load_balance_score,
+            ctx->results.queue_capacity_bytes);
     
     fclose(fp);
     return 0;

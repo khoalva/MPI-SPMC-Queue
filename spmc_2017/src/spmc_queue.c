@@ -23,7 +23,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
         return MPI_ERR_OTHER;
     }
 
-    int size = 128;
+    int size = MAX_QUEUE_SIZE;
     if (argc > 1) {
         int parsed = atoi(argv[1]);
         if (parsed > 0 && parsed <= MAX_QUEUE_SIZE) size = parsed;
@@ -212,6 +212,12 @@ int spmc_queue_is_enqueuer(spmc_queue_t *queue) {
 
 void spmc_queue_print_stats(spmc_queue_t *queue) {
     printf("Queue size: %d, head: %d, tail: %d\n", queue->q.size, queue->q.head, queue->q.tail);
+}
+
+// Trả về tổng số byte mà queue cấp phát cho dữ liệu (metadata + cells)
+size_t spmc_queue_get_capacity_bytes(const spmc_queue_t *queue) {
+    if (!queue) return 0;
+    return sizeof(queue_t) + queue->q.size * sizeof(spmc_cell_t);
 }
 
 // ==== END: Required API for benchmark compatibility ====

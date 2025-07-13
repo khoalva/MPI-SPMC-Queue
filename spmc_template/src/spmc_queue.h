@@ -29,6 +29,6 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value);
 int spmc_queue_dequeue(spmc_queue_t *queue);
 void spmc_queue_print_stats(spmc_queue_t *queue);
 int spmc_queue_is_enqueuer(spmc_queue_t *queue);
-
+size_t spmc_queue_get_capacity_bytes(const spmc_queue_t *queue);
 // Can add more utility functions and structs as needed
 #endif

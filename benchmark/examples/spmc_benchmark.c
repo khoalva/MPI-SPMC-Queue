@@ -153,6 +153,10 @@ static int run_benchmark_test(spmc_queue_t *queue, const char *test_type) {
         printf("Rank %d: Consumer completed - consumed %d items\\n", mpi_rank, items_consumed);
     }
     
+    // Gán số liệu space complexity cho benchmark_ctx trước khi stop
+    bench_ctx.results.queue_capacity_bytes = 0;
+    // Luôn gọi hàm getter, không cần macro
+    bench_ctx.results.queue_capacity_bytes = spmc_queue_get_capacity_bytes(queue);
     // Stop benchmark timing
     benchmark_stop(&bench_ctx);
     
