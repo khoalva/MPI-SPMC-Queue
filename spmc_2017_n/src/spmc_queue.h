@@ -16,15 +16,18 @@ typedef struct {
 } spmc_cell_t;
 
 typedef struct {
-    mpi_context_t mpi_ctx; // MPI context for communication
-
-    spmc_cell_t *cells; // Pointer to cells array
+    spmc_cell_t* cells; // Pointer to cells array
     int head;
     int tail;
     int size;
-    
-    mpi_window_t win_cells;
-    mpi_window_t win_head;
+    int lastItemDequeued;
+} queue_t;
+
+typedef struct {
+    mpi_context_t mpi_ctx; // MPI context for communication
+
+    queue_t q; // Queue metadata
+    mpi_window_t win_queue;
 } spmc_queue_t;
 
 

@@ -23,48 +23,40 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
         return MPI_ERR_OTHER;
     }
 
-    int size = MAX_QUEUE_SIZE;
-    if (argc > 1) {
-        int parsed = atoi(argv[1]);
-        if (parsed > 0 && parsed <= MAX_QUEUE_SIZE) size = parsed;
+    // Allocate memory for cells
+    queue->size = MAX_QUEUE_SIZE;
+    queue->cells = malloc(queue->size * sizeof(spmc_cell_t));
+    if (!queue->cells) {
+        fprintf(stderr, "Failed to allocate memory for queue cells\n");
+        mpi_finalize();
+        return MPI_ERR_OTHER;
     }
-
-    // Cấp phát block liên tục cho metadata và cells
-    size_t meta_size = sizeof(queue_t);
-    size_t cells_size = size * sizeof(spmc_cell_t);
-    size_t total_size = meta_size + cells_size;
-    void* block = NULL;
-    if (mpi_is_root(&queue->mpi_ctx)) {
-        block = malloc(total_size);
-        memset(block, 0, total_size);
-        // Gán metadata
-        queue_t* meta = (queue_t*)block;
-        meta->size = size;
-        meta->head = 0;
-        meta->tail = 0;
-        meta->lastItemDequeued = -1;
-        meta->cells = (spmc_cell_t*)((char*)block + meta_size);
-        for (int i = 0; i < size; ++i) {
-            meta->cells[i].rank = EMPTY_CELL;
-            meta->cells[i].gap = 0;
-            meta->cells[i].data = EMPTY_CELL;
+    // Initialize queue metadata
+    queue->head = 0;
+    queue->tail = 0;
+    // Initialize cells
+    if(mpi_is_root(&queue->mpi_ctx)) {
+        for (int i = 0; i < queue->size; i++) {
+            queue->cells[i].rank = EMPTY_CELL; // Mark as empty
+            queue->cells[i].gap = 0; // No gap initially
+            queue->cells[i].data = 0; // No data
         }
-        // Gán lại cho queue->q
-        queue->q = *meta;
-        queue->q.cells = meta->cells;
-    } else {
-        block = NULL;
     }
 
-    // Tạo MPI window cho block
-    MPI_TRY(mpi_win_create(block, mpi_is_root(&queue->mpi_ctx) ? total_size : 0, 1, queue->mpi_ctx.comm, &queue->win_queue));
-
-    mpi_barrier(queue->mpi_ctx.comm); // Ensure all processes are synchronized after window creation
+    // Create MPI window for cells
+    MPI_TRY(mpi_win_create(queue->cells,
+                           mpi_is_root(&queue->mpi_ctx) ? queue->size * sizeof(spmc_cell_t) : 0,
+                           sizeof(spmc_cell_t), queue->mpi_ctx.comm, &queue->win_cells));
+    
+    // Create MPI window for head
+    MPI_TRY(mpi_win_create(&queue->head,
+                           mpi_is_root(&queue->mpi_ctx) ? sizeof(int) : 0,
+                           sizeof(int), queue->mpi_ctx.comm, &queue->win_head));
 
     // Lock all windows for passive target synchronization
     if (mpi_is_root(&queue->mpi_ctx)) {
-        mpi_window_t windows[] = {queue->win_queue};
-        MPI_TRY(mpi_win_lock_all_multiple(windows, 1));
+        mpi_window_t windows[] = {queue->win_cells, queue->win_head};
+        MPI_TRY(mpi_win_lock_all_multiple(windows, 2));
     }
     
     printf("SPMC Queue initialized successfully on rank %d/%d\n", 
@@ -79,12 +71,12 @@ void spmc_queue_destroy(spmc_queue_t *queue) {
 
     // Chỉ root mới unlock_all
     if (mpi_is_root(&queue->mpi_ctx)) {
-        mpi_window_t windows[] = {queue->win_queue};
-        mpi_win_unlock_all_multiple(windows, 1);
+        mpi_window_t windows[] = {queue->win_cells, queue->win_head};
+        mpi_win_unlock_all_multiple(windows, 2);
     }
 
-    mpi_win_destroy(&queue->win_queue);
-    // Không cần free queue->q.cells vì đã free block ở root, nếu cần thì chỉ root free block
+    mpi_win_destroy(&queue->win_cells);
+
     mpi_finalize();
     printf("SPMC Queue destroyed on rank %d\n", mpi_get_rank(&queue->mpi_ctx));
 }
@@ -96,30 +88,39 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int item) {
     // Only producer should enqueue
     if (!mpi_is_root(&queue->mpi_ctx)) return -1;
 
-    int current_tail = queue->q.tail;
-    int next_tail = (current_tail + 1) % queue->q.size;
+    int current_tail = queue->tail;
+    int next_tail = (current_tail + 1) % queue->size;
 
+    int head = mpi_get(&queue->head, sizeof(int), MPI_INT, 0, 0, &queue->win_head);
     // Check if queue is full
-    if (next_tail == queue->q.head) {
-        printf("[ENQUEUE][rank %d] Queue is full! tail=%d, head=%d\n", mpi_get_rank(&queue->mpi_ctx), current_tail, queue->q.head);
+    if (next_tail == head) {
+        printf("[ENQUEUE][rank %d] Queue is full! tail=%d, head=%d\n", mpi_get_rank(&queue->mpi_ctx), current_tail, queue->head);
         return -1; // Queue is full
     }
 
-    // Fill the cell (producer can access directly)
-    queue->q.cells[current_tail].rank = mpi_get_rank(&queue->mpi_ctx);
-    queue->q.cells[current_tail].gap = 0;
-    queue->q.cells[current_tail].data = item;
+    spmc_cell_t c = mpi_get(queue->cells, sizeof(spmc_cell_t), MPI_BYTE, 0, 
+                                sizeof(queue_t) + current_tail * sizeof(spmc_cell_t), &queue->win_cells);
 
-    // Update tail pointer
-    queue->q.tail = next_tail;
-
+    if (c.rank != EMPTY_CELL) {
+        printf("[ENQUEUE][rank %d] Cell already occupied at pos %d\n", mpi_get_rank(&queue->mpi_ctx), current_tail);
+        c.gap = current_tail; // Update gap to current tail
+        MPI_TRY(mpi_put(&c, sizeof(spmc_cell_t), MPI_BYTE, 0, 
+                sizeof(queue->cells) + current_tail * sizeof(spmc_cell_t), &queue->win_cells));
+        return -1; // Cell already occupied
+    } else {
+        // Mark cell as occupied
+        c.rank = queue->tail;
+        c.data = item;
+        c.gap = 0;
+        // Update the cell in producer's memory
+        MPI_TRY(mpi_put(&c, sizeof(spmc_cell_t), MPI_BYTE, 0, 
+                sizeof(queue->cells) + current_tail * sizeof(spmc_cell_t), &queue->win_cells));
+    }
+    queue->tail = next_tail;
     // Log enqueue action
-    printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | new tail=%d, head=%d\n", mpi_get_rank(&queue->mpi_ctx), item, current_tail, queue->q.tail, queue->q.head);
+    printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | new tail=%d, head=%d\n", mpi_get_rank(&queue->mpi_ctx), item, current_tail, queue->tail, queue->head);
 
-    // Đồng bộ metadata lên window để consumer thấy được trạng thái mới nhất
-    mpi_put(&queue->q, sizeof(queue_t), MPI_BYTE, 0, 0, &queue->win_queue);
-    mpi_win_flush(0, &queue->win_queue);
-
+    mpi_win_flush(0, &queue->win_cells);
     return MPI_SUCCESS;
 }
 
@@ -127,83 +128,28 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int item) {
 int spmc_queue_dequeue(spmc_queue_t *queue) {
     if (!queue) return -1;
 
-    // Start passive target epoch for this consumer
-    MPI_TRY(mpi_win_lock(MPI_LOCK_SHARED, 0, 0, &queue->win_queue));
-
-    // For consumers, we need to access queue data through MPI window
-    queue_t local_queue;
-    if (!mpi_is_root(&queue->mpi_ctx)) {
-        // Consumer: Get queue metadata from producer (rank 0)
-        int result = mpi_get(&local_queue, sizeof(queue_t), MPI_BYTE, 0, 0, &queue->win_queue);
-        if (result != MPI_SUCCESS) {
-            mpi_win_unlock(0, &queue->win_queue);
-            return -1;
-        }
-    }
-
-    // Atomic fetch-and-op để lấy và tăng head
     int one = 1;
-    int my_head = -1;
-    int queue_size = local_queue.size;
-    if (!mpi_is_root(&queue->mpi_ctx)) {
-        mpi_fetch_and_op(&one, &my_head, MPI_INT, 0, offsetof(queue_t, head), MPI_SUM, &queue->win_queue);
-        mpi_win_flush(0, &queue->win_queue);
-        // Lấy lại local_queue.tail để kiểm tra empty
-        int tail = 0;
-        int result = mpi_get(&tail, sizeof(int), MPI_BYTE, 0, offsetof(queue_t, tail), &queue->win_queue);
-        if (result != MPI_SUCCESS) {
-            mpi_win_unlock(0, &queue->win_queue);
-            return -1;
-        }
-        // Wrap-around chỉ số head
-        my_head = my_head % queue_size;
-        if (my_head == tail) {
-            printf("[DEQUEUE][rank %d] Queue is empty! head=%d, tail=%d\n", mpi_get_rank(&queue->mpi_ctx), my_head, tail);
-            mpi_win_unlock(0, &queue->win_queue);
-            return -1; // Queue is empty
-        }
-    } else {
-        // Producer không dequeue
-        mpi_win_unlock(0, &queue->win_queue);
-        return -1;
+    int rank;
+    MPI_TRY(mpi_fetch_and_op(&one, &rank, MPI_INT, 0, 0, MPI_SUM, &queue->win_head));
+    
+    int c = mpi_get(&queue->cells, sizeof(spmc_cell_t), MPI_BYTE, 0, 
+                                sizeof(queue_t) + rank * sizeof(spmc_cell_t), &queue->win_cells);
+    if (c.rank == rank) {
+        // Cell is occupied, dequeue it
+        int item = c.data;
+        c.rank = EMPTY_CELL; // Mark as empty
+        c.gap++; // Increment gap
+        MPI_TRY(mpi_put(&c, sizeof(spmc_cell_t), MPI_BYTE, 0, 
+                sizeof(queue->cells) + rank * sizeof(spmc_cell_t), &queue->win_cells));
+        
+        printf("[DEQUEUE][rank %d] Dequeued item: %d at pos %d | head=%d, tail=%d\n", mpi_get_rank(&queue->mpi_ctx), item, rank, queue->head, queue->tail);
+        mpi_win_flush(0, &queue->win_cells);
+        return MPI_SUCCESS;
+    } 
+    else {
+        printf("[DEQUEUE][rank %d] Cell already empty at pos %d\n", mpi_get_rank(&queue->mpi_ctx), rank);
+        return -1; // Cell was already empty
     }
-
-    // For consumers, get the cell data from producer's memory
-    spmc_cell_t cell;
-    size_t cell_offset = sizeof(queue_t) + my_head * sizeof(spmc_cell_t);
-    int result = mpi_get(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, cell_offset, &queue->win_queue);
-    if (result != MPI_SUCCESS) {
-        mpi_win_unlock(0, &queue->win_queue);
-        return -1;
-    }
-
-    // Check if this item was already dequeued
-    if (cell.rank == EMPTY_CELL) {
-        printf("[DEQUEUE][rank %d] Cell already empty at pos %d\n", mpi_get_rank(&queue->mpi_ctx), my_head);
-        mpi_win_unlock(0, &queue->win_queue);
-        return -1;
-    }
-
-    // Copy the data
-    int item = cell.data;
-
-    // Log dequeue action
-    printf("[DEQUEUE][rank %d] Dequeued item: %d at pos %d | head=%d, tail=%d\n", mpi_get_rank(&queue->mpi_ctx), item, my_head, my_head, local_queue.tail);
-
-    // Mark cell as consumed and update queue state
-    cell.rank = EMPTY_CELL;
-    cell.gap++;
-
-    // Update the cell in producer's memory
-    result = mpi_put(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, cell_offset, &queue->win_queue);
-    if (result != MPI_SUCCESS) {
-        mpi_win_unlock(0, &queue->win_queue);
-        return false;
-    }
-
-    // End passive target epoch
-    mpi_win_unlock(0, &queue->win_queue);
-    return item;
 }
 
 int spmc_queue_is_enqueuer(spmc_queue_t *queue) {
