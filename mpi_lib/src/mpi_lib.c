@@ -267,6 +267,32 @@ int mpi_get(void *origin_addr, int count, MPI_Datatype datatype,
     return err;
 }
 
+int mpi_get_accumulate(const void *origin_addr, int origin_count, MPI_Datatype origin_datatype,
+                       void *result_addr, int result_count, MPI_Datatype result_datatype,
+                       int target_rank, size_t target_offset, int target_count, MPI_Datatype target_datatype,
+                       MPI_Op op, mpi_window_t *win) {
+    if (!origin_addr || !result_addr || !win || !win->is_valid) return MPI_ERR_ARG;
+    if (origin_count <= 0 || result_count <= 0 || target_count <= 0) return MPI_ERR_ARG;
+    if (win->element_size <= 0) return MPI_ERR_ARG;
+
+    MPI_Aint displacement = target_offset / win->element_size;
+
+    int err = MPI_Get_accumulate(origin_addr, origin_count, origin_datatype,
+                                 result_addr, result_count, result_datatype,
+                                 target_rank, displacement, target_count, target_datatype,
+                                 op, win->window);
+    if (err != MPI_SUCCESS) {
+        mpi_print_error(err, "MPI_Get_accumulate", __FILE__, __LINE__);
+        return err;
+    }
+
+    err = MPI_Win_flush(target_rank, win->window);
+    if (err != MPI_SUCCESS) {
+        mpi_print_error(err, "MPI_Win_flush", __FILE__, __LINE__);
+    }
+    return err;
+}
+
 int mpi_compare_and_swap(const void *origin_addr, const void *compare_addr,
                          void *result_addr, MPI_Datatype datatype,
                          int target_rank, size_t target_offset, mpi_window_t *win) {

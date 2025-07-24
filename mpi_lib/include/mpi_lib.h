@@ -277,6 +277,28 @@ int mpi_put(const void *origin_addr, int count, MPI_Datatype datatype,
 int mpi_get(void *origin_addr, int count, MPI_Datatype datatype,
             int target_rank, size_t target_offset, mpi_window_t *win);
 
+
+/**
+ * Safe MPI_Get_accumulate with automatic flushing and error handling
+ * @param origin_addr Source data
+ * @param origin_count Number of elements in origin
+ * @param origin_datatype MPI datatype of origin
+ * @param result_addr Buffer to store old value
+ * @param result_count Number of elements in result
+ * @param result_datatype MPI datatype of result
+ * @param target_rank Target process rank
+ * @param target_offset Offset in target window (in bytes)
+ * @param target_count Number of elements in target
+ * @param target_datatype MPI datatype of target
+ * @param op MPI operation (e.g., MPI_REPLACE)
+ * @param win Target window
+ * @return MPI_SUCCESS on success, error code otherwise
+ */
+int mpi_get_accumulate(const void *origin_addr, int origin_count, MPI_Datatype origin_datatype,
+                       void *result_addr, int result_count, MPI_Datatype result_datatype,
+                       int target_rank, size_t target_offset, int target_count, MPI_Datatype target_datatype,
+                       MPI_Op op, mpi_window_t *win);
+
 /**
  * Safe MPI_Compare_and_swap with automatic flushing and error handling
  * @param origin_addr New value to store
