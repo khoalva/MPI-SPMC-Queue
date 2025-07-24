@@ -596,3 +596,19 @@ int mpi_win_flush(int rank, mpi_window_t *win) {
     }
     return err;
 }
+
+int mpi_win_sync(mpi_window_t *win) {
+    if (!win) {
+        fprintf(stderr, "[MPI_LIB ERROR] NULL window pointer in mpi_win_sync\n");
+        return MPI_ERR_ARG;
+    }
+    if (!win->is_valid) {
+        fprintf(stderr, "[MPI_LIB ERROR] Invalid window in mpi_win_sync\n");
+        return MPI_ERR_ARG;
+    }
+    int err = MPI_Win_sync(win->window);
+    if (err != MPI_SUCCESS) {
+        mpi_print_error(err, "MPI_Win_sync", __FILE__, __LINE__);
+    }
+    return err;
+}

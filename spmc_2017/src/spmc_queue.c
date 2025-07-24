@@ -97,7 +97,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
 
     // First, do a robust check for fullness to prevent tail from lapping head indefinitely.
     MPI_TRY(mpi_get(&head_val, sizeof(int), MPI_BYTE, 0, 0, &queue->win_head));
-    MPI_TRY(mpi_win_flush(0, &queue->win_head));
+
     if ((current_tail_val - head_val) >= queue->size) {
         printf("[ENQUEUE][rank %d] Queue is full! tail=%d, head=%d\n", mpi_get_rank(&queue->mpi_ctx), current_tail_val, head_val);
         return -1;
@@ -108,7 +108,6 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
 
     // Read the current state of the target cell from the MPI window.
     MPI_TRY(mpi_get(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, pos * sizeof(spmc_cell_t), &queue->win_cells));
-    MPI_TRY(mpi_win_flush(0, &queue->win_cells));
 
     // Check if the cell is used (rank >= 0).
     if (cell.rank != EMPTY_CELL) {
@@ -117,7 +116,6 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         printf("[ENQUEUE][rank %d] Contention at pos %d. Cell is not empty.\n", mpi_get_rank(&queue->mpi_ctx), pos);
         cell.gap = current_tail_val;
         MPI_TRY(mpi_put(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, pos * sizeof(spmc_cell_t), &queue->win_cells));
-        MPI_TRY(mpi_win_flush(0, &queue->win_cells));
         return -1; // Indicate failure due to contention.
     } else {
         // The cell is empty, so we can claim it.
@@ -127,7 +125,6 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
 
         // Put the new cell data into shared memory.
         MPI_TRY(mpi_put(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, pos * sizeof(spmc_cell_t), &queue->win_cells));
-        MPI_TRY(mpi_win_flush(0, &queue->win_cells));
 
         // IMPORTANT: The local tail is only incremented after the data is successfully written.
         queue->tail = current_tail_val + 1;
@@ -151,7 +148,6 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
 
     // Atomically get a rank to process. This is our one "ticket" for this attempt.
     MPI_TRY(mpi_fetch_and_op(&one, &my_rank, MPI_INT, 0, 0, MPI_SUM, &queue->win_head));
-    MPI_TRY(mpi_win_flush(0, &queue->win_head));
 
     int pos = my_rank % queue->size;
     MPI_Aint disp = pos * sizeof(spmc_cell_t);
@@ -161,7 +157,6 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     while (poll_attempts < MAX_POLL_ATTEMPTS) {
         spmc_cell_t c;
         MPI_TRY(mpi_get(&c, sizeof(spmc_cell_t), MPI_BYTE, 0, disp, &queue->win_cells));
-        MPI_TRY(mpi_win_flush(0, &queue->win_cells));
 
         // Case 1: The cell's rank matches our rank. It's ready for us to claim.
         if (c.rank == my_rank) {
@@ -173,7 +168,6 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
 
             // Assuming mpi_compare_and_swap exists and maps to MPI_Compare_and_swap.
             MPI_TRY(mpi_compare_and_swap(&empty_val, &compare_val, &result_val, MPI_INT, 0, rank_disp, &queue->win_cells));
-            MPI_TRY(mpi_win_flush(0, &queue->win_cells));
 
             // If the value before the swap was our rank, we successfully claimed it.
             if (result_val == my_rank) {

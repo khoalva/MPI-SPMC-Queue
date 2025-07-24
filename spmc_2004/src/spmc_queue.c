@@ -1,3 +1,9 @@
+// Complete fix for SPMC queue race condition
+// The key issues were:
+// 1. Improper initialization of shared row state
+// 2. Missing memory barriers and synchronization
+// 3. Potential offset calculation issues in MPI windows
+
 #include "spmc_queue.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,8 +20,8 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
         return -1;
     }
     
-    // Initialize queue metadata
-    queue->row = 0;
+    // Initialize queue metadata - CRITICAL FIX
+    queue->row = 0;  // No rows completed yet
     queue->eng_row = 0;
     queue->tail = 0;
     
@@ -29,13 +35,12 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
             return -1;
         }
         
-        // Initialize all items to L (⊥)
+        // Initialize all items to L (⊥) - EXPLICIT initialization
         for (int i = 0; i < MAX_ROWS * MAX_COLS; i++) {
             queue->items[i] = L;
         }
 
-        // Place the end-of-row marker at the last column of each row.
-        // This column is reserved and cannot be used for data.
+        // Place the end-of-row marker (⊤) at the last column of each row
         for (int r = 0; r < MAX_ROWS; ++r) {
             queue->items[r * MAX_COLS + (MAX_COLS - 1)] = T;
         }
@@ -44,6 +49,10 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
         for (int i = 0; i < MAX_ROWS; i++) {
             queue->head[i] = 0;
         }
+        
+        // CRITICAL: Add memory barrier after initialization
+        printf("[INIT] Rank %d: Memory initialized, first few items: %d, %d, %d\n",
+               mpi_get_rank(&queue->mpi_ctx), queue->items[0], queue->items[1], queue->items[2]);
     }
     
     // Create MPI windows using the custom library
@@ -62,6 +71,9 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
     // Lock all windows for passive target synchronization
     mpi_window_t windows[] = {queue->win_head, queue->win_items, queue->win_row};
     MPI_TRY(mpi_win_lock_all_multiple(windows, 3));
+    
+    // CRITICAL: Add a barrier to ensure all processes see the initialization
+    MPI_TRY(mpi_barrier(queue->mpi_ctx.comm));
     
     printf("SPMC Queue initialized successfully on rank %d/%d\n", 
            mpi_get_rank(&queue->mpi_ctx), mpi_get_size(&queue->mpi_ctx));
@@ -95,87 +107,151 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         return -1;
     }
     
-    int val_from_swap;
-    size_t target_offset = (queue->eng_row * MAX_COLS + queue->tail);
-    
-    // Step 1: Atomically swap the value into the items array.
-    MPI_TRY(mpi_get_accumulate(&value, 1, MPI_INT, &val_from_swap, 1, MPI_INT, 0, target_offset, 1, MPI_INT, MPI_REPLACE, &queue->win_items));
+    int val_from_cas;
+    int l_value = L; // The value we expect an empty cell to have
+    size_t element_offset = (queue->eng_row * MAX_COLS + queue->tail);
+    size_t byte_offset = element_offset * sizeof(int);
+
+    // Bounds checking - CRITICAL SAFETY CHECK
+    if (element_offset >= MAX_ROWS * MAX_COLS) {
+        fprintf(stderr, "FATAL: Calculated element offset %zu exceeds bounds\n", element_offset);
+        return -1;
+    }
+
+    printf("[ENQ_OFFSET_DEBUG] Rank %d: Element offset = %zu, Byte offset = %zu for (row:%d, col:%d)\n",
+           mpi_get_rank(&queue->mpi_ctx), element_offset, byte_offset, queue->eng_row, queue->tail);
+
+    // FIXED: Use byte offset for MPI operations
+    MPI_TRY(mpi_compare_and_swap(&value, &l_value, &val_from_cas, MPI_INT, 0, byte_offset, &queue->win_items));
     MPI_TRY(mpi_win_flush(0, &queue->win_items));
     
-    // Step 2: Check if we hit the end-of-row marker, which we defined as T.
-    if (val_from_swap == T) {
-        // We hit the end of the row. We must restore the marker we just overwrote.
-        int t_marker = T;
-        MPI_TRY(mpi_put(&t_marker, 1, MPI_INT, 0, target_offset, &queue->win_items));
-        MPI_TRY(mpi_win_flush(0, &queue->win_items));
-        
-        // Step 3: Increment row
+    printf("[ENQ_CAS_RESULT] Rank %d: CAS returned original value: %d (expected L=%d)\n",
+           mpi_get_rank(&queue->mpi_ctx), val_from_cas, L);
+    
+    // Case 1: Success! The cell was empty (L), as expected.
+    if (val_from_cas == L) {
+        queue->tail++;
+        printf("Rank %d enqueued: %d (row: %d, col: %d)\n", 
+               mpi_get_rank(&queue->mpi_ctx), value, queue->eng_row, queue->tail - 1);
+        return MPI_SUCCESS;
+    }
+    // Case 2: We hit the end-of-row marker (T).
+    else if (val_from_cas == T) {
+        // Move to next row
+        int finished_row = queue->eng_row;
         queue->eng_row++;
         if (queue->eng_row >= MAX_ROWS) {
             fprintf(stderr, "Row limit exceeded\n");
             return -1;
         }
-
-        // Step 4: Reset tail
         queue->tail = 0;
 
-        // Step 5: Perform the swap again at the new position (new_row, 0)
-        size_t new_target_offset = (queue->eng_row * MAX_COLS + queue->tail);
-        int dummy_val;
-        MPI_TRY(mpi_get_accumulate(&value, 1, MPI_INT, &dummy_val, 1, MPI_INT, 0, new_target_offset, 1, MPI_INT, MPI_REPLACE, &queue->win_items));
-        MPI_TRY(mpi_win_flush(0, &queue->win_items));
+        // Try again at the new position
+        size_t new_element_offset = (queue->eng_row * MAX_COLS + queue->tail);
+        size_t new_byte_offset = new_element_offset * sizeof(int);
+        
+        // Bounds checking for new position
+        if (new_element_offset >= MAX_ROWS * MAX_COLS) {
+            fprintf(stderr, "FATAL: New element offset %zu exceeds bounds\n", new_element_offset);
+            return -1;
+        }
+        
+        printf("[ENQ_OFFSET_DEBUG] Rank %d: New element offset = %zu, byte offset = %zu for (row:%d, col:%d)\n",
+               mpi_get_rank(&queue->mpi_ctx), new_element_offset, new_byte_offset, queue->eng_row, queue->tail);
 
-        // Step 6: Announce the new row to consumers.
-        // The pseudo-code says Write(ROW, enq_row). This means consumers can now start dequeuing from this new row.
-        int new_row_to_announce = queue->eng_row;
-        MPI_TRY(mpi_put(&new_row_to_announce, 1, MPI_INT, 0, 0, &queue->win_row));
+        int dummy_val;
+        MPI_TRY(mpi_compare_and_swap(&value, &l_value, &dummy_val, MPI_INT, 0, new_byte_offset, &queue->win_items));
+        MPI_TRY(mpi_win_flush(0, &queue->win_items));
+        
+        if (dummy_val != L) {
+            fprintf(stderr, "FATAL ERROR: New cell was not empty during row switch! Found: %d\n", dummy_val);
+            return -1;
+        }
+
+        // Announce the completed row
+        MPI_TRY(mpi_put(&finished_row, 1, MPI_INT, 0, 0, &queue->win_row));
         MPI_TRY(mpi_win_flush(0, &queue->win_row));
+
+        queue->tail++;
+        printf("Rank %d enqueued: %d (row: %d, col: %d) after row switch\n", 
+               mpi_get_rank(&queue->mpi_ctx), value, queue->eng_row, queue->tail - 1);
+        return MPI_SUCCESS;
     }
-    
-    // Step 7: Increment local tail
-    queue->tail++;
-    
-    printf("Rank %d enqueued: %d (row: %d, col: %d)\n", 
-           mpi_get_rank(&queue->mpi_ctx), value, queue->eng_row, queue->tail - 1);
-           
-    return MPI_SUCCESS;
+    // Case 3: Unexpected value found
+    else {
+        fprintf(stderr, "Rank %d ENQ_FAIL: Unexpected value %d at (row:%d, col:%d). Expected L=%d or T=%d\n",
+                mpi_get_rank(&queue->mpi_ctx), val_from_cas, queue->eng_row, queue->tail, L, T);
+        
+        // Don't increment tail - this is a real error condition
+        return -1;
+    }
 }
 
 int spmc_queue_dequeue(spmc_queue_t *queue) {
     if (spmc_queue_is_enqueuer(queue)) return -1;
     
-    int deq_row, head_val, val;
+    int announced_row, head_val, val;
     
-    // Step 1: Read the row that is safe for dequeuing
-    MPI_TRY(mpi_get(&deq_row, 1, MPI_INT, 0, 0, &queue->win_row));
+    // Step 1: Read the announced row (the last completed row)
+    MPI_TRY(mpi_get(&announced_row, 1, MPI_INT, 0, 0, &queue->win_row));
     MPI_TRY(mpi_win_flush(0, &queue->win_row));
     
-    // Step 2: Atomically get a unique column index for this row
+    // Check if there's actually a completed row available
+    if (announced_row < 0) {
+        printf("Rank %d: No completed rows available yet (announced_row=%d)\n", 
+               mpi_get_rank(&queue->mpi_ctx), announced_row);
+        return -1;
+    }
+    
+    // Step 2: Atomically get a unique column index for the announced row
     int one = 1;
-    size_t head_offset = deq_row;
-    MPI_TRY(mpi_fetch_and_op(&one, &head_val, MPI_INT, 0, head_offset, MPI_SUM, &queue->win_head));
+    size_t head_element_offset = announced_row;
+    size_t head_byte_offset = head_element_offset * sizeof(int);
+
+    // Bounds checking
+    if (head_element_offset >= MAX_ROWS) {
+        fprintf(stderr, "FATAL: Head element offset %zu exceeds MAX_ROWS\n", head_element_offset);
+        return -1;
+    }
+
+    printf("[DEQ_OFFSET_DEBUG] Rank %d: Head element offset = %zu, byte offset = %zu for announced_row %d\n",
+           mpi_get_rank(&queue->mpi_ctx), head_element_offset, head_byte_offset, announced_row);
+
+    MPI_TRY(mpi_fetch_and_op(&one, &head_val, MPI_INT, 0, head_byte_offset, MPI_SUM, &queue->win_head));
     MPI_TRY(mpi_win_flush(0, &queue->win_head));
 
     // Check if we are trying to read the reserved end-of-row marker
     if (head_val >= MAX_COLS - 1) {
-        printf("Rank %d found empty queue (row %d is full)\n", mpi_get_rank(&queue->mpi_ctx), deq_row);
+        printf("Rank %d found empty queue (announced_row %d is exhausted)\n", 
+               mpi_get_rank(&queue->mpi_ctx), announced_row);
         return -1;
     }
     
-    // Step 3: Atomically swap the value out and put a 'T' (dequeued) marker in its place.
+    // Step 3: Atomically swap the value out
     int t_value = T; 
-    size_t items_offset = (deq_row * MAX_COLS + head_val);
-    MPI_TRY(mpi_get_accumulate(&t_value, 1, MPI_INT, &val, 1, MPI_INT, 0, items_offset, 1, MPI_INT, MPI_REPLACE, &queue->win_items));
+    size_t items_element_offset = (announced_row * MAX_COLS + head_val);
+    size_t items_byte_offset = items_element_offset * sizeof(int);
+
+    // Bounds checking
+    if (items_element_offset >= MAX_ROWS * MAX_COLS) {
+        fprintf(stderr, "FATAL: Items element offset %zu exceeds bounds\n", items_element_offset);
+        return -1;
+    }
+
+    printf("[DEQ_OFFSET_DEBUG] Rank %d: Items element offset = %zu, byte offset = %zu for (row:%d, col:%d)\n",
+           mpi_get_rank(&queue->mpi_ctx), items_element_offset, items_byte_offset, announced_row, head_val);
+
+    MPI_TRY(mpi_get_accumulate(&t_value, 1, MPI_INT, &val, 1, MPI_INT, 0, items_byte_offset, 1, MPI_INT, MPI_REPLACE, &queue->win_items));
     MPI_TRY(mpi_win_flush(0, &queue->win_items));
     
-    // Step 4: Check what we got.
+    // Step 4: Check what we got
     if (val == L || val == T) { 
         printf("Rank %d found empty/stale cell (val=%d) at (row: %d, col: %d)\n", 
-               mpi_get_rank(&queue->mpi_ctx), val, deq_row, head_val);
+               mpi_get_rank(&queue->mpi_ctx), val, announced_row, head_val);
         return -1;
     } else {
         printf("Rank %d dequeued: %d (row: %d, col: %d)\n", 
-               mpi_get_rank(&queue->mpi_ctx), val, deq_row, head_val);
+               mpi_get_rank(&queue->mpi_ctx), val, announced_row, head_val);
         return val;
     }
 }

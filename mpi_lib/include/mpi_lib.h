@@ -247,6 +247,14 @@ int mpi_win_unlock(int rank, mpi_window_t *win);
  */
 int mpi_win_flush(int rank, mpi_window_t *win);
 
+/**
+ * Synchronizes the public and private copies of a window.
+ * This acts as a memory fence for all MPI RMA operations on the window.
+ * @param win Pointer to the window structure to synchronize.
+ * @return MPI_SUCCESS on success, error code otherwise.
+ */
+int mpi_win_sync(mpi_window_t *win);
+
 // ============================================================================
 // ONE-SIDED COMMUNICATION
 // ============================================================================
