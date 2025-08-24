@@ -23,7 +23,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
 
     queue->size = MAX_QUEUE_SIZE;
     int is_producer = (mpi_get_rank(&queue->mpi_ctx) == 0);
-
+    
     // Only the producer (rank 0) allocates and initializes the queue memory.
     if (is_producer) {
         queue->cells = malloc(queue->size * sizeof(spmc_cell_t));
@@ -93,15 +93,15 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     if (!spmc_queue_is_enqueuer(queue)) return -1;
 
     int current_tail_val = queue->tail;
-    // int head_val;
+    int head_val;
 
-    // // First, do a robust check for fullness to prevent tail from lapping head indefinitely.
-    // MPI_TRY(mpi_get(&head_val, sizeof(int), MPI_BYTE, 0, 0, &queue->win_head));
+    // First, do a robust check for fullness to prevent tail from lapping head indefinitely.
+    MPI_TRY(mpi_get(&head_val, sizeof(int), MPI_BYTE, 0, 0, &queue->win_head));
 
-    // if ((current_tail_val - head_val) >= queue->size) {
-    //     printf("[ENQUEUE][rank %d] Queue is full! tail=%d, head=%d\n", mpi_get_rank(&queue->mpi_ctx), current_tail_val, head_val);
-    //     return -1;
-    // }
+    if ((current_tail_val - head_val) >= queue->size) {
+        printf("[ENQUEUE][rank %d] Queue is full! tail=%d, head=%d\n", mpi_get_rank(&queue->mpi_ctx), current_tail_val, head_val);
+        return -1;
+    }
 
     int pos = current_tail_val % queue->size;
     spmc_cell_t cell;
@@ -116,7 +116,6 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         printf("[ENQUEUE][rank %d] Contention at pos %d. Cell is not empty.\n", mpi_get_rank(&queue->mpi_ctx), pos);
         cell.gap = current_tail_val;
         MPI_TRY(mpi_put(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, pos * sizeof(spmc_cell_t), &queue->win_cells));
-        queue->tail++;
         return -1; // Indicate failure due to contention.
     } else {
         // The cell is empty, so we can claim it.
@@ -130,8 +129,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         // IMPORTANT: The local tail is only incremented after the data is successfully written.
         queue->tail = current_tail_val + 1;
 
-        printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | new_tail=%d\n",
-               mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
+        printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | new_tail=%d, head=%d\n",
+               mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail, head_val);
 
         return MPI_SUCCESS;
     }
@@ -181,7 +180,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
         }
         // Case 2: The cell has been skipped by the producer (a "gap").
         else if (c.gap >= my_rank && c.rank != my_rank) {
-            // Still have item to dequeue so just try again
+            // This rank will never be fulfilled. The attempt fails.
             return -1;
         }
         // Case 3: The cell is not ready yet. Wait and poll again.

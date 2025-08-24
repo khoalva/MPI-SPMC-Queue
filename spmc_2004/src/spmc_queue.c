@@ -138,8 +138,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     // Case 2: We hit the end-of-row marker (T).
     else if (val_from_cas == T) {
         // Move to next row
-        int finished_row = queue->eng_row;
         queue->eng_row++;
+        int finished_row = queue->eng_row;
         if (queue->eng_row >= MAX_ROWS) {
             fprintf(stderr, "Row limit exceeded\n");
             return -1;
