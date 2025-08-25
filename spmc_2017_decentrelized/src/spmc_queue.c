@@ -121,7 +121,6 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         // The cell is empty, so we can claim it.
         cell.data = value;
         cell.rank = current_tail_val; // Claim the cell by setting its rank to the current tail value.
-        cell.gap = 0; // Reset gap.
 
         // Put the new cell data into shared memory.
         MPI_TRY(mpi_put(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, pos * sizeof(spmc_cell_t), &queue->win_cells));

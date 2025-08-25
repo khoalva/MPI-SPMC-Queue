@@ -45,22 +45,29 @@ int main(int argc, char *argv[]) {
         printf("Rank %d: Starting as CONSUMER\n", mpi_get_rank(&queue.mpi_ctx));
         
         int items_consumed = 0;
-        int max_attempts = 50; // More attempts to catch items as they're produced
+        int consecutive_failures = 0;
+        int max_consecutive_failures = 3; // Stop after 5 consecutive failures
         
-        for (int attempt = 0; attempt < max_attempts; attempt++) {
+        while (consecutive_failures < max_consecutive_failures) {
             int value = spmc_queue_dequeue(&queue);
             if (value != -1) {
                 items_consumed++;
+                consecutive_failures = 0; // Reset failure counter on success
+                printf("Rank %d: Successfully consumed item %d (total: %d)\n", 
+                       mpi_get_rank(&queue.mpi_ctx), value, items_consumed);
                 // Shorter delay when successfully consuming
                 usleep(40000); // 40ms
             } else {
+                consecutive_failures++;
+                printf("Rank %d: Failed to dequeue (consecutive failures: %d/%d)\n", 
+                       mpi_get_rank(&queue.mpi_ctx), consecutive_failures, max_consecutive_failures);
                 // Small delay when queue is empty, then try again
-                usleep(20000); // 20ms - quick retry
-            }`                                                                                                      
+                usleep(50000); // 50ms - longer retry delay when failing
+            }                                                                                            
         }
         
-        printf("Rank %d: Consumer finished, consumed %d items\n", 
-               mpi_get_rank(&queue.mpi_ctx), items_consumed);
+        printf("Rank %d: Consumer finished, consumed %d items (stopped after %d consecutive failures)\n", 
+               mpi_get_rank(&queue.mpi_ctx), items_consumed, consecutive_failures);
     }
     
     // Final synchronization to ensure all processes finish

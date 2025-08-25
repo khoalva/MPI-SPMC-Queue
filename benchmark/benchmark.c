@@ -222,15 +222,61 @@ int benchmark_aggregate_results(benchmark_ctx_t *ctx, void *mpi_comm) {
     long local_produced = ctx->local_stats.items_produced;
     long local_consumed = ctx->local_stats.items_consumed;
     
+    // For SPMC: Only sum items_produced from producers, sum items_consumed from all consumers
+    // But we need to be careful - in proper SPMC, total consumed should never exceed total produced
     MPI_Allreduce(&local_produced, &ctx->results.total_items_produced, 
                   1, MPI_LONG, MPI_SUM, comm);
     MPI_Allreduce(&local_consumed, &ctx->results.total_items_consumed, 
                   1, MPI_LONG, MPI_SUM, comm);
     
+    // Validation: Ensure total_items_consumed doesn't exceed total_items_produced
+    if (ctx->results.total_items_consumed > ctx->results.total_items_produced) {
+        if (ctx->mpi_rank == 0) {
+            printf("WARNING: Items consumed (%ld) exceeds items produced (%ld)\n", 
+                   ctx->results.total_items_consumed, ctx->results.total_items_produced);
+            printf("This indicates a counting error or race condition in the benchmark.\n");
+        }
+        // Cap consumed items to produced items for consistency
+        ctx->results.total_items_consumed = ctx->results.total_items_produced;
+    }
+    
     // Calculate throughput
     if (ctx->results.total_time_sec > 0) {
         ctx->results.throughput_items_per_sec = 
             ctx->results.total_items_consumed / ctx->results.total_time_sec;
+    }
+    
+    // Debug: Print per-process statistics on rank 0
+    if (ctx->mpi_rank == 0) {
+        printf("\\nDebug - Per-process statistics:\\n");
+        printf("  Rank %d (this): produced=%ld, consumed=%ld\\n", 
+               ctx->mpi_rank, ctx->local_stats.items_produced, ctx->local_stats.items_consumed);
+    }
+    
+    // Gather individual process statistics for debugging
+    process_stats_t *all_stats = NULL;
+    if (ctx->mpi_rank == 0) {
+        all_stats = malloc(ctx->mpi_size * sizeof(process_stats_t));
+    }
+    
+    MPI_Gather(&ctx->local_stats, sizeof(process_stats_t), MPI_BYTE,
+               all_stats, sizeof(process_stats_t), MPI_BYTE, 0, comm);
+    
+    if (ctx->mpi_rank == 0 && all_stats) {
+        printf("\\nAll processes statistics:\\n");
+        long debug_total_produced = 0, debug_total_consumed = 0;
+        for (int i = 0; i < ctx->mpi_size; i++) {
+            printf("  Rank %d: produced=%ld, consumed=%ld\\n", 
+                   all_stats[i].rank, all_stats[i].items_produced, all_stats[i].items_consumed);
+            debug_total_produced += all_stats[i].items_produced;
+            debug_total_consumed += all_stats[i].items_consumed;
+        }
+        printf("  DEBUG TOTALS: produced=%ld, consumed=%ld\\n", 
+               debug_total_produced, debug_total_consumed);
+        
+        ctx->results.load_balance_score = 
+            benchmark_calculate_load_balance(all_stats, ctx->mpi_size);
+        free(all_stats);
     }
     
     // Aggregate latency statistics
@@ -249,21 +295,6 @@ int benchmark_aggregate_results(benchmark_ctx_t *ctx, void *mpi_comm) {
         MPI_Allreduce(&ctx->results.memory_peak_kb, &max_memory, 
                       1, MPI_LONG, MPI_MAX, comm);
         ctx->results.memory_peak_kb = max_memory;
-    }
-    
-    // Calculate load balance score
-    process_stats_t *all_stats = NULL;
-    if (ctx->mpi_rank == 0) {
-        all_stats = malloc(ctx->mpi_size * sizeof(process_stats_t));
-    }
-    
-    MPI_Gather(&ctx->local_stats, sizeof(process_stats_t), MPI_BYTE,
-               all_stats, sizeof(process_stats_t), MPI_BYTE, 0, comm);
-    
-    if (ctx->mpi_rank == 0 && all_stats) {
-        ctx->results.load_balance_score = 
-            benchmark_calculate_load_balance(all_stats, ctx->mpi_size);
-        free(all_stats);
     }
     
     return 0;

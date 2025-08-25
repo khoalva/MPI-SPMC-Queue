@@ -145,7 +145,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         int pos = current_tail_val % queue->row_size;
         
         // Add bounds checking
-        if (queue->row >= queue->num_row || pos >= queue->row_size) {
+        if (queue->row >= MAX_NUM_ROWS || pos >= queue->row_size) {
             printf("[ENQUEUE][rank %d] Invalid position: row=%d, pos=%d\n", 
                 mpi_get_rank(&queue->mpi_ctx), queue->row, pos);
             return -1;
@@ -161,7 +161,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         if (cell.rank != EMPTY_CELL && queue->try_count < MAX_TRY_COUNT) {
             // The cell is currently occupied by a previous value that a consumer hasn't processed yet.
             // As per the FFQ algorithm, mark a "gap" to indicate this slot was skipped.
-            printf("[ENQUEUE][rank %d] Contention at pos %d. Cell is not empty.\n", mpi_get_rank(&queue->mpi_ctx), pos);
+            printf("[ENQUEUE][rank %d] Contention at pos %d row %d. Cell is not empty.\n", mpi_get_rank(&queue->mpi_ctx), pos, queue->row);
             cell.gap = current_tail_val;
             MPI_TRY(mpi_put(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, cell_offset, &queue->win_cells));
             queue->try_count++;
@@ -182,7 +182,6 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             // The cell is empty, so we can claim it.
             cell.data = value;
             cell.rank = current_tail_val; // Claim the cell by setting its rank to the current tail value.
-            cell.gap = 0; // Reset gap.
 
             // Put the new cell data into shared memory.
             MPI_TRY(mpi_put(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, cell_offset, &queue->win_cells));
@@ -190,8 +189,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             // IMPORTANT: The local tail is only incremented after the data is successfully written.
             queue->tail = current_tail_val + 1;
 
-            printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | new_tail=%d\n",
-                mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
+            printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d row %d | new_tail=%d\n",
+                mpi_get_rank(&queue->mpi_ctx), value, pos, queue->row, queue->tail);
 
             success = true;
         }
@@ -205,27 +204,29 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
 int spmc_queue_dequeue(spmc_queue_t *queue) {
     if (spmc_queue_is_enqueuer(queue)) return -1;
 
-    int my_rank;
-    int one = 1;
+
     const int MAX_POLL_ATTEMPTS = 200; // Poll for ~2ms before giving up.
 
-    // Atomically get a rank to process. This is our one "ticket" for this attempt.
-    MPI_TRY(mpi_fetch_and_op(&one, &my_rank, MPI_INT, 0, queue->row * sizeof(int), MPI_SUM, &queue->win_heads));
 
-    int pos = my_rank % queue->row_size;
+
     
     // Add bounds checking
-    if (queue->row >= queue->num_row || pos >= queue->row_size) {
-        printf("[DEQUEUE][rank %d] Invalid position: row=%d, pos=%d\n", 
-               mpi_get_rank(&queue->mpi_ctx), queue->row, pos);
+    if (queue->row >= queue->num_row) {
+        printf("[DEQUEUE][rank %d] Invalid position: row=%d\n", 
+               mpi_get_rank(&queue->mpi_ctx), queue->row);
         return -1;
     }
-    
-    MPI_Aint disp = (queue->row * queue->row_size + pos) * sizeof(spmc_cell_t);
-    int poll_attempts = 0;
 
+    int poll_attempts = 0;
+    bool success = false;
     // Poll the specific cell for a limited time.
-    while (poll_attempts < MAX_POLL_ATTEMPTS) {
+    while (!success && poll_attempts < MAX_POLL_ATTEMPTS) {
+        int my_rank;
+        int one = 1;
+        // Atomically get a rank to process. This is our one "ticket" for this attempt.
+        MPI_TRY(mpi_fetch_and_op(&one, &my_rank, MPI_INT, 0, queue->row * sizeof(int), MPI_SUM, &queue->win_heads));
+        int pos = my_rank % queue->row_size;
+        MPI_Aint disp = (queue->row * queue->row_size + pos) * sizeof(spmc_cell_t);
         spmc_cell_t c;
         MPI_TRY(mpi_get(&c, sizeof(spmc_cell_t), MPI_BYTE, 0, disp, &queue->win_cells));
 
@@ -242,7 +243,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
 
             // If the value before the swap was our rank, we successfully claimed it.
             if (result_val == my_rank) {
-                printf("[DEQUEUE][rank %d] Dequeued item: %d at pos %d\n", mpi_get_rank(&queue->mpi_ctx), c.data, pos);
+                printf("[DEQUEUE][rank %d] Dequeued item: %d at pos %d row %d\n", mpi_get_rank(&queue->mpi_ctx), c.data, pos, queue->row);
                 return MPI_SUCCESS;
             } else {
                 // We lost a race to another consumer for this specific item.
@@ -251,7 +252,8 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
         }
         // Case 2: The cell has been skipped by the producer (a "gap").
         else if (c.gap >= my_rank && c.rank != my_rank) {
-            return -1;
+            // Still have item to dequeue so just try again
+            poll_attempts++;
         }
         // Case 3: The cell is not ready yet. Wait and poll again.
         else {

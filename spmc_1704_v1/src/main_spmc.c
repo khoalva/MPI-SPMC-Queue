@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
             } else {
                 // Small delay when queue is empty, then try again
                 usleep(20000); // 20ms - quick retry
-            }`                                                                                                      
+            }                                                                                              
         }
         
         printf("Rank %d: Consumer finished, consumed %d items\n", 

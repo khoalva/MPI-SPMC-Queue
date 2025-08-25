@@ -91,50 +91,60 @@ void spmc_queue_destroy(spmc_queue_t *queue) {
  */
 int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     if (!spmc_queue_is_enqueuer(queue)) return -1;
+    bool success = false;
+    const int MAX_POLL_ATTEMPTS = 20;
+    int poll_attempts = 0;
+    while(!success && poll_attempts < MAX_POLL_ATTEMPTS) {
+            
+        int current_tail_val = queue->tail;
+        // int head_val;
 
-    int current_tail_val = queue->tail;
-    // int head_val;
+        // // First, do a robust check for fullness to prevent tail from lapping head indefinitely.
+        // MPI_TRY(mpi_get(&head_val, sizeof(int), MPI_BYTE, 0, 0, &queue->win_head));
 
-    // // First, do a robust check for fullness to prevent tail from lapping head indefinitely.
-    // MPI_TRY(mpi_get(&head_val, sizeof(int), MPI_BYTE, 0, 0, &queue->win_head));
+        // if ((current_tail_val - head_val) >= queue->size) {
+        //     printf("[ENQUEUE][rank %d] Queue is full! tail=%d, head=%d\n", mpi_get_rank(&queue->mpi_ctx), current_tail_val, head_val);
+        //     return -1;
+        // }
 
-    // if ((current_tail_val - head_val) >= queue->size) {
-    //     printf("[ENQUEUE][rank %d] Queue is full! tail=%d, head=%d\n", mpi_get_rank(&queue->mpi_ctx), current_tail_val, head_val);
-    //     return -1;
-    // }
+        int pos = current_tail_val % queue->size;
+        spmc_cell_t cell;
 
-    int pos = current_tail_val % queue->size;
-    spmc_cell_t cell;
+        // Read the current state of the target cell from the MPI window.
+        MPI_TRY(mpi_get(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, pos * sizeof(spmc_cell_t), &queue->win_cells));
 
-    // Read the current state of the target cell from the MPI window.
-    MPI_TRY(mpi_get(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, pos * sizeof(spmc_cell_t), &queue->win_cells));
+        // Check if the cell is used (rank >= 0).
+        if (cell.rank != EMPTY_CELL) {
+            // The cell is currently occupied by a previous value that a consumer hasn't processed yet.
+            // As per the FFQ algorithm, mark a "gap" to indicate this slot was skipped.
+            printf("[ENQUEUE][rank %d] Contention at pos %d. Cell is not empty.\n", mpi_get_rank(&queue->mpi_ctx), pos);
+            cell.gap = current_tail_val;
+            MPI_TRY(mpi_put(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, pos * sizeof(spmc_cell_t), &queue->win_cells));
+            queue->tail++;
+            poll_attempts++;
+        } else {
+            // The cell is empty, so we can claim it.
+            cell.data = value;
+            cell.rank = current_tail_val; // Claim the cell by setting its rank to the current tail value.
 
-    // Check if the cell is used (rank >= 0).
-    if (cell.rank != EMPTY_CELL) {
-        // The cell is currently occupied by a previous value that a consumer hasn't processed yet.
-        // As per the FFQ algorithm, mark a "gap" to indicate this slot was skipped.
-        printf("[ENQUEUE][rank %d] Contention at pos %d. Cell is not empty.\n", mpi_get_rank(&queue->mpi_ctx), pos);
-        cell.gap = current_tail_val;
-        MPI_TRY(mpi_put(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, pos * sizeof(spmc_cell_t), &queue->win_cells));
-        queue->tail++;
-        return -1; // Indicate failure due to contention.
-    } else {
-        // The cell is empty, so we can claim it.
-        cell.data = value;
-        cell.rank = current_tail_val; // Claim the cell by setting its rank to the current tail value.
-        cell.gap = 0; // Reset gap.
+            // Put the new cell data into shared memory.
+            MPI_TRY(mpi_put(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, pos * sizeof(spmc_cell_t), &queue->win_cells));
 
-        // Put the new cell data into shared memory.
-        MPI_TRY(mpi_put(&cell, sizeof(spmc_cell_t), MPI_BYTE, 0, pos * sizeof(spmc_cell_t), &queue->win_cells));
+            // IMPORTANT: The local tail is only incremented after the data is successfully written.
+            queue->tail = current_tail_val + 1;
 
-        // IMPORTANT: The local tail is only incremented after the data is successfully written.
-        queue->tail = current_tail_val + 1;
+            printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | new_tail=%d\n",
+                mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
 
-        printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | new_tail=%d\n",
-               mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
-
-        return MPI_SUCCESS;
+            success = true;
+        }
     }
+    if(!success){
+        printf("[ENQUEUE][rank %d] Failed to enqueue after %d attempts. Queue might be full or contended.\n", mpi_get_rank(&queue->mpi_ctx), poll_attempts);
+        fflush(stdout);
+        return -1;
+    }
+    return MPI_SUCCESS;
 }
 /**
  * @brief Dequeues an item using FFQ logic. This function will not loop indefinitely.

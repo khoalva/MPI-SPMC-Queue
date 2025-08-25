@@ -267,6 +267,47 @@ int mpi_get(void *origin_addr, int count, MPI_Datatype datatype,
     return err;
 }
 
+int mpi_accumulate(const void *origin_addr, int count, MPI_Datatype datatype,
+                   int target_rank, size_t target_offset, MPI_Op op,
+                   mpi_window_t *win) {
+    if (!origin_addr) {
+        fprintf(stderr, "[MPI_LIB ERROR] NULL origin_addr in mpi_accumulate\n");
+        return MPI_ERR_ARG;
+    }
+    
+    if (!win || !win->is_valid) {
+        fprintf(stderr, "[MPI_LIB ERROR] Invalid window in mpi_accumulate\n");
+        return MPI_ERR_ARG;
+    }
+    
+    if (count <= 0) {
+        fprintf(stderr, "[MPI_LIB ERROR] Invalid count (%d) in mpi_accumulate\n", count);
+        return MPI_ERR_ARG;
+    }
+    
+    if (win->element_size <= 0) {
+        fprintf(stderr, "[MPI_LIB ERROR] Invalid element_size (%d) in mpi_accumulate\n", win->element_size);
+        return MPI_ERR_ARG;
+    }
+    
+    // Convert byte offset to displacement units
+    MPI_Aint displacement = target_offset / win->element_size;
+    
+    int err = MPI_Accumulate(origin_addr, count, datatype, target_rank, displacement, 
+                            count, datatype, op, win->window);
+    if (err != MPI_SUCCESS) {
+        mpi_print_error(err, "MPI_Accumulate", __FILE__, __LINE__);
+        return err;
+    }
+    
+    // Flush to ensure completion
+    err = MPI_Win_flush(target_rank, win->window);
+    if (err != MPI_SUCCESS) {
+        mpi_print_error(err, "MPI_Win_flush", __FILE__, __LINE__);
+    }
+    return err;
+}
+
 int mpi_get_accumulate(const void *origin_addr, int origin_count, MPI_Datatype origin_datatype,
                        void *result_addr, int result_count, MPI_Datatype result_datatype,
                        int target_rank, size_t target_offset, int target_count, MPI_Datatype target_datatype,

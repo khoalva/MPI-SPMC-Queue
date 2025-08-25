@@ -2,20 +2,29 @@
 #define SPMC_QUEUE_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "mpi_lib.h"
 
 // Constants for FFQ algorithm
 #define EMPTY_CELL -1
 #define DEQUEUED_CELL -2
-#define MAX_ROW_SIZE 1024
-#define MAX_NUM_ROWS 16
+#define MAX_ROW_SIZE 4000
+#define MAX_NUM_ROWS 3
 #define MAX_TRY_COUNT 3
+#define MAX_LOG_SIZE 1024
 
 typedef struct {
     int rank;        // Producer rank
     int gap;         // Gap for ordering
     int data;        // Actual data (integer)
+    int row_epoch;   // Row epoch
 } spmc_cell_t;
+
+typedef struct{
+    int rows, cols;
+    int words_per_row;
+    uint64_t *data;
+} BitLog_t;
 
 typedef struct {
     mpi_context_t mpi_ctx; // MPI context for communication
@@ -23,8 +32,8 @@ typedef struct {
     spmc_cell_t **cells; // Pointer to cells array
     int* heads;
     int* row_epochs;
-    int** producer_log;
-    int** consumer_log;
+    BitLog_t* producer_log;
+    BitLog_t* consumer_log;
 
     int row;
     int row_epoch;
@@ -50,4 +59,9 @@ int spmc_queue_dequeue(spmc_queue_t *queue);
 void spmc_queue_print_stats(spmc_queue_t *queue);
 int spmc_queue_is_enqueuer(spmc_queue_t *queue);
 size_t spmc_queue_get_capacity_bytes(spmc_queue_t *queue);
+
+//self implement
+void bitlog_init(BitLog_t *log, int rows, int words_per_row);
+void bitlog_destroy(BitLog_t *log);
+int check_bit(uint64_t *log, int col);
 #endif

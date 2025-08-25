@@ -7,7 +7,7 @@
 // Constants for FFQ algorithm
 #define EMPTY_CELL -1
 #define DEQUEUED_CELL -2
-#define MAX_QUEUE_SIZE 1024
+#define MAX_QUEUE_SIZE 8000
 
 typedef struct {
     int rank;        // Producer rank
