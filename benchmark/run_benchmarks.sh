@@ -162,45 +162,19 @@ mkdir -p "$OUTPUT_DIR" "$LOG_DIR"
 check_library_dependencies() {
     local executable="$1"
     
-    log_info "Checking library dependencies for: $executable"
-    log_info "Current LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-'(not set)'}"
-    
     if [[ ! -f "$executable" ]]; then
         log_error "Executable not found: $executable"
         return 1
     fi
     
-    log_info "Dependencies check:"
-    if ldd "$executable" 2>/dev/null; then
-        echo ""
-        if ldd "$executable" 2>/dev/null | grep -q "not found"; then
-            log_error "Missing dependencies found:"
-            ldd "$executable" 2>/dev/null | grep "not found"
-            
-            log_info "Searching for missing libraries..."
-            local search_paths=(
-                "${BENCHMARK_DIR}/lib"
-                "${WORKSPACE_DIR}/mpi_lib/lib"
-                "/usr/local/lib"
-                "/usr/lib"
-                "/usr/lib/x86_64-linux-gnu"
-            )
-            
-            for path in "${search_paths[@]}"; do
-                if [[ -d "$path" ]]; then
-                    log_info "Checking $path:"
-                    find "$path" -name "*.so*" 2>/dev/null | head -5 | sed 's/^/  /'
-                fi
-            done
-            
-            return 1
-        else
-            log_success "All dependencies resolved successfully"
-            return 0
-        fi
-    else
-        log_error "Failed to check dependencies"
+    if ldd "$executable" 2>/dev/null | grep -q "not found"; then
+        log_error "Missing library dependencies found:"
+        ldd "$executable" 2>/dev/null | grep "not found"
+        log_info "Current LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-'(not set)'}"
         return 1
+    else
+        log_success "Library dependencies check passed"
+        return 0
     fi
 }
 
@@ -372,27 +346,16 @@ build_spmc_implementation() {
     
     echo "" >&2
     log_info "Building SPMC implementation: $spmc_name"
-    log_info "SPMC path: $spmc_path"
     
-    # Debug: Show what we're checking
-    log_info "Checking if directory exists..."
     if [[ ! -d "$spmc_path" ]]; then
         log_error "SPMC directory does not exist: $spmc_path"
-        log_info "Current working directory: $(pwd)"
-        log_info "Attempting to list parent directory:"
-        ls -la "$(dirname "$spmc_path")" 2>/dev/null || log_error "Cannot list parent directory"
         return 1
     fi
     
-    log_info "Directory exists, checking for Makefile..."
     if [[ ! -f "$spmc_path/Makefile" ]]; then
         log_error "No Makefile found in $spmc_path"
-        log_info "Contents of $spmc_path:"
-        ls -la "$spmc_path" 2>/dev/null || log_error "Cannot list directory contents"
         return 1
     fi
-    
-    log_info "Found Makefile, starting build..."
     cd "$spmc_path" || {
         log_error "Failed to change directory to $spmc_path"
         return 1
@@ -403,19 +366,14 @@ build_spmc_implementation() {
     local build_success=false
     
     # Clean first
-    if make clean 2>/dev/null; then
-        log_info "Cleaned previous build artifacts"
-    fi
+    make clean 2>/dev/null
     
     # Try each build target
     for target in "${build_targets[@]}"; do
-        log_info "Attempting to build target: $target"
         if make "$target" 2>/dev/null; then
             log_success "Successfully built target: $target"
             build_success=true
             break
-        else
-            log_warning "Failed to build target: $target"
         fi
     done
     
@@ -448,7 +406,6 @@ build_and_link_spmc_benchmark() {
         return 1
     fi
 
-    log_info "Building benchmark object: $benchmark_obj"
     mkdir -p "${BENCHMARK_DIR}/bin"
     mpicc -c "${BENCHMARK_DIR}/examples/spmc_benchmark.c" -I"$spmc_path" -I"$spmc_path/src" -I"${WORKSPACE_DIR}/mpi_lib/include" -o "$benchmark_obj"
     if [[ $? -ne 0 ]]; then
@@ -456,7 +413,6 @@ build_and_link_spmc_benchmark() {
         return 1
     fi
 
-    log_info "Linking $benchmark_obj + $spmc_obj -> $exe_out"
     mpicc "$benchmark_obj" "$spmc_obj" \
         -o "$exe_out" \
         -I"$spmc_path" \
@@ -492,14 +448,11 @@ run_benchmark() {
         return 1
     fi
 
-    log_info "Using executable: $spmc_executable"
+
     
     # Check library dependencies before running
-    log_info "Checking library dependencies..."
     if ! check_library_dependencies "$spmc_executable"; then
         log_error "Library dependency check failed"
-        log_info "Current LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
-        log_info "Try installing missing libraries or check library paths"
         return 1
     fi
 
@@ -513,11 +466,9 @@ run_benchmark() {
         if [[ -n "${WSL_DISTRO_NAME}" ]] || [[ "$EUID" -eq 0 ]]; then
             mpi_cmd="$mpi_cmd --allow-run-as-root"
         fi
-        log_info "Detected OpenMPI"
     elif echo "$mpi_version" | grep -qi "mpich\|hydra"; then
         # MPICH
         mpi_cmd="mpirun"
-        log_info "Detected MPICH (no --allow-run-as-root needed)"
     else
         # Fallback - try without special flags
         mpi_cmd="mpirun"
@@ -527,29 +478,33 @@ run_benchmark() {
     mpi_cmd="$mpi_cmd -np $num_procs $spmc_executable $test_type"
 
     # Execute benchmark
-    log_info "About to execute MPI command..."
-    log_info "Command: $mpi_cmd"
-    log_info "Log file: $log_file"
+    log_info "Executing: $mpi_cmd"
+    
+    # Change to session directory so CSV files are created there
+    local original_dir=$(pwd)
+    cd "$session_folder" || {
+        log_error "Failed to change to session directory: $session_folder"
+        return 1
+    }
     
     if [[ "$VERBOSE" == "true" ]]; then
-        log_info "Executing in verbose mode..."
         if echo "$mpi_version" | grep -qi "open.mpi\|openmpi"; then
             OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 timeout 60 $mpi_cmd 2>&1 | tee "$log_file"
         else
             timeout 60 $mpi_cmd 2>&1 | tee "$log_file"
         fi
     else
-        log_info "Executing in quiet mode..."
         if echo "$mpi_version" | grep -qi "open.mpi\|openmpi"; then
             timeout 60 bash -c "OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 $mpi_cmd > '$log_file' 2>&1"
         else
             timeout 60 bash -c "$mpi_cmd > '$log_file' 2>&1"
         fi
     fi
+    
+    # Return to original directory
+    cd "$original_dir"
 
     local exit_code=$?
-    
-    log_info "MPI command finished with exit code: $exit_code"
     
     if [[ $exit_code -eq 124 ]]; then
         log_error "$test_type benchmark timed out after 60 seconds"
@@ -559,33 +514,46 @@ run_benchmark() {
         log_success "$test_type benchmark completed successfully"
         log_info "Benchmark log file: $log_file"
 
-        # Look for CSV results in multiple locations
+        # Look for CSV results - should be in session folder now
         local csv_file="benchmark_${test_type}_${num_procs}procs.csv"
         local new_csv_name="${spmc_name}_${test_type}_${num_procs}procs_${timestamp}.csv"
         local csv_found=false
 
-        # Possible locations for CSV files
-        local search_paths=(
-            "${BENCHMARK_DIR}/$csv_file"
-            "${BENCHMARK_DIR}/examples/$csv_file"
-            "${spmc_path}/$csv_file"
-            "${spmc_path}/examples/$csv_file"
-            "${spmc_path}/bin/$csv_file"
-            "${spmc_path}/build/$csv_file"
-            "$(dirname "$spmc_executable")/$csv_file"
-        )
+        # Primary location: session folder (where we executed MPI command)
+        local primary_csv_path="${session_folder}/$csv_file"
+        
+        if [[ -f "$primary_csv_path" ]]; then
+            log_info "Found CSV file in session folder: $primary_csv_path"
+            mv "$primary_csv_path" "${session_folder}/$new_csv_name"
+            log_success "Results renamed to: ${session_folder}/$new_csv_name"
+            csv_found=true
+        else
+            log_warning "CSV file not found in session folder, searching other locations..."
+            
+            # Fallback locations for CSV files
+            local search_paths=(
+                "${BENCHMARK_DIR}/$csv_file"            # Benchmark directory
+                "${BENCHMARK_DIR}/examples/$csv_file"   # Benchmark examples directory
+                "${spmc_path}/$csv_file"               # SPMC implementation directory
+                "${spmc_path}/examples/$csv_file"      # SPMC examples directory
+                "${spmc_path}/bin/$csv_file"           # SPMC bin directory
+                "${spmc_path}/build/$csv_file"         # SPMC build directory
+                "$(dirname "$spmc_executable")/$csv_file" # Directory containing executable
+            )
 
-        for csv_path in "${search_paths[@]}"; do
-            if [[ -f "$csv_path" ]]; then
-                mv "$csv_path" "${session_folder}/$new_csv_name"
-                log_info "Results saved to: ${session_folder}/$new_csv_name"
-                csv_found=true
-                break
-            fi
-        done
+            for csv_path in "${search_paths[@]}"; do
+                if [[ -f "$csv_path" ]]; then
+                    log_info "Found CSV file at fallback location: $csv_path"
+                    mv "$csv_path" "${session_folder}/$new_csv_name"
+                    log_success "Results saved to: ${session_folder}/$new_csv_name"
+                    csv_found=true
+                    break
+                fi
+            done
+        fi
 
         if [[ "$csv_found" == "false" ]]; then
-            log_warning "CSV results file not found in expected locations"
+            log_warning "CSV results file not found - check log file for details"
         fi
     else
         log_error "$test_type benchmark failed (exit code: $exit_code)"
@@ -699,18 +667,15 @@ main() {
         exit 1
     fi
     
-    log_info "Found SPMC executable: $spmc_executable"
-    
     # Create output directory
     mkdir -p "$OUTPUT_DIR"
-    log_info "Results will be saved to: $OUTPUT_DIR"
     
     # Create session folder for this benchmark run
     local session_timestamp=$(date +"%Y%m%d_%H%M%S")
     local spmc_name=$(basename "$spmc_path")
     local session_folder="${OUTPUT_DIR}/session_${spmc_name}_${session_timestamp}"
     mkdir -p "$session_folder"
-    log_info "Session folder created: $session_folder"
+    log_info "Results will be saved to: $session_folder"
     echo ""
     
     # Run requested benchmark(s)
