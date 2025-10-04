@@ -64,6 +64,7 @@ print_usage() {
     echo "  -p, --processes NUM   Number of MPI processes (default: 3)"
     echo "  -s, --spmc-path PATH  Path to SPMC implementation directory"
     echo "  -o, --output DIR      Output directory for results"
+    echo "  -H, --hosts HOSTS     Comma-separated list of MPI hosts/nodes"
     echo "  -l, --log-level LEVEL Log level (info, warning, error)"
     echo "  -h, --help           Show this help message"
     echo "  -v, --verbose        Enable verbose output"
@@ -77,8 +78,9 @@ print_usage() {
     echo "  $0 quick"
     echo "  $0 throughput -p 4"
     echo "  $0 throughput -p 4 -s ../spmc_2004"
+    echo "  $0 throughput -p 8 -H MPI-node1,MPI-node2,MPI-node3,MPI-node4"
     echo "  $0 suite -p 6 --export-csv -s ../spmc_impl"
-    echo "  $0 scalability -o ./results"
+    echo "  $0 scalability -p 8 -H node1,node2 -o ./results"
     echo "  $0 --check-libs"
     echo ""
 }
@@ -88,6 +90,7 @@ NUM_PROCESSES=3
 TEST_TYPE="quick"
 OUTPUT_DIR=""
 SPMC_PATH=""
+MPI_HOSTS=""
 VERBOSE=false
 NO_BUILD=false
 EXPORT_CSV=false
@@ -108,6 +111,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -o|--output)
             OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        -H|--hosts)
+            MPI_HOSTS="$2"
             shift 2
             ;;
         -h|--help)
@@ -473,6 +480,11 @@ run_benchmark() {
         # Fallback - try without special flags
         mpi_cmd="mpirun"
         log_warning "Unknown MPI implementation, using basic mpirun"
+    fi
+    
+    # Add hosts specification if provided
+    if [[ -n "$MPI_HOSTS" ]]; then
+        mpi_cmd="$mpi_cmd -hosts $MPI_HOSTS"
     fi
     
     mpi_cmd="$mpi_cmd -np $num_procs $spmc_executable $test_type"
