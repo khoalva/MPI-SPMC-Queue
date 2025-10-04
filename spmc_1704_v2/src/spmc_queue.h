@@ -8,8 +8,8 @@
 // Constants for FFQ algorithm
 #define EMPTY_CELL -1
 #define DEQUEUED_CELL -2
-#define MAX_ROW_SIZE 4000
-#define MAX_NUM_ROWS 3
+#define MAX_ROW_SIZE 1000
+#define MAX_NUM_ROWS 10
 #define MAX_TRY_COUNT 3
 #define MAX_LOG_SIZE 1024
 

@@ -55,15 +55,15 @@ clean:
 # Run with different process counts (with proper library path)
 run-2: $(TARGET)
 	@echo "Running with 2 processes (1 producer, 1 consumer)..."
-	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun --allow-run-as-root -np 2 $(TARGET)
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun  -np 2 $(TARGET)
 
 run-4: $(TARGET)
 	@echo "Running with 4 processes (1 producer, 3 consumers)..."
-	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun --allow-run-as-root -np 4 $(TARGET)
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun  -np 4 $(TARGET)
 
 run-8: $(TARGET)
 	@echo "Running with 8 processes (1 producer, 7 consumers)..."
-	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun --allow-run-as-root -np 8 $(TARGET)
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun  -np 8 $(TARGET)
 
 # Debug version
 debug: CFLAGS += -DDEBUG -g -O0

@@ -503,24 +503,59 @@ run_benchmark() {
         return 1
     fi
 
-    # Build MPI command
-    local mpi_cmd="mpirun"
-    if [[ -n "${WSL_DISTRO_NAME}" ]] || [[ "$EUID" -eq 0 ]]; then
-        mpi_cmd="$mpi_cmd --allow-run-as-root"
+    # Build MPI command - detect MPI implementation
+    local mpi_cmd=""
+    local mpi_version=$(mpirun --version 2>&1 | head -1)
+    
+    if echo "$mpi_version" | grep -qi "open.mpi\|openmpi"; then
+        # OpenMPI
+        mpi_cmd="mpirun"
+        if [[ -n "${WSL_DISTRO_NAME}" ]] || [[ "$EUID" -eq 0 ]]; then
+            mpi_cmd="$mpi_cmd --allow-run-as-root"
+        fi
+        log_info "Detected OpenMPI"
+    elif echo "$mpi_version" | grep -qi "mpich\|hydra"; then
+        # MPICH
+        mpi_cmd="mpirun"
+        log_info "Detected MPICH (no --allow-run-as-root needed)"
+    else
+        # Fallback - try without special flags
+        mpi_cmd="mpirun"
+        log_warning "Unknown MPI implementation, using basic mpirun"
     fi
+    
     mpi_cmd="$mpi_cmd -np $num_procs $spmc_executable $test_type"
 
     # Execute benchmark
+    log_info "About to execute MPI command..."
+    log_info "Command: $mpi_cmd"
+    log_info "Log file: $log_file"
+    
     if [[ "$VERBOSE" == "true" ]]; then
-        log_info "Executing: $mpi_cmd"
-        $mpi_cmd 2>&1 | tee "$log_file"
+        log_info "Executing in verbose mode..."
+        if echo "$mpi_version" | grep -qi "open.mpi\|openmpi"; then
+            OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 timeout 60 $mpi_cmd 2>&1 | tee "$log_file"
+        else
+            timeout 60 $mpi_cmd 2>&1 | tee "$log_file"
+        fi
     else
-        OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 $mpi_cmd > "$log_file" 2>&1
+        log_info "Executing in quiet mode..."
+        if echo "$mpi_version" | grep -qi "open.mpi\|openmpi"; then
+            timeout 60 bash -c "OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 $mpi_cmd > '$log_file' 2>&1"
+        else
+            timeout 60 bash -c "$mpi_cmd > '$log_file' 2>&1"
+        fi
     fi
 
     local exit_code=$?
     
-    if [[ $exit_code -eq 0 ]]; then
+    log_info "MPI command finished with exit code: $exit_code"
+    
+    if [[ $exit_code -eq 124 ]]; then
+        log_error "$test_type benchmark timed out after 60 seconds"
+        log_error "Check log file for details: $log_file"
+        return 124
+    elif [[ $exit_code -eq 0 ]]; then
         log_success "$test_type benchmark completed successfully"
         log_info "Benchmark log file: $log_file"
 

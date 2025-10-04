@@ -392,10 +392,40 @@ int spmc_queue_is_enqueuer(spmc_queue_t *queue) {
  */
 size_t spmc_queue_get_capacity_bytes(spmc_queue_t *queue) {
     if (!queue) return 0;
+    
+    size_t total_bytes = 0;
+    
+    // Only the producer (rank 0) allocates the main memory structures
     if (spmc_queue_is_enqueuer(queue)) {
-        return queue->num_row * queue->row_size * sizeof(spmc_cell_t);
+        // 1. Memory for cells (main data storage)
+        total_bytes += queue->num_row * queue->row_size * sizeof(spmc_cell_t);
+        
+        // 2. Memory for heads array
+        total_bytes += queue->num_row * sizeof(int);
+        
+        // 3. Memory for row_epochs array
+        total_bytes += queue->num_row * sizeof(int);
+        
+        // 4. Memory for cells pointer array
+        total_bytes += queue->num_row * sizeof(spmc_cell_t*);
+        
+        // 5. Memory for producer_log BitLog structure
+        if (queue->producer_log) {
+            total_bytes += sizeof(BitLog_t);
+            total_bytes += queue->producer_log->rows * queue->producer_log->words_per_row * sizeof(uint64_t);
+        }
+        
+        // 6. Memory for consumer_log BitLog structure
+        if (queue->consumer_log) {
+            total_bytes += sizeof(BitLog_t);
+            total_bytes += queue->consumer_log->rows * queue->consumer_log->words_per_row * sizeof(uint64_t);
+        }
     }
-    return 0;
+    
+    // 7. Basic queue structure memory (allocated for all processes)
+    total_bytes += sizeof(spmc_queue_t);
+    
+    return total_bytes;
 }
 /**
  * @brief Initializes a BitLog structure.

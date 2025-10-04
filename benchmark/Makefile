@@ -54,8 +54,8 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c $(HEADERS)
 examples: spmc_benchmark
 
 spmc_benchmark: $(EXAMPLEDIR)/spmc_benchmark.c $(STATIC_LIB)
-	$(CC) $(CFLAGS) -I$(INCDIR) -I../spmc_2004 -I../mpi_lib/include \
-		$(EXAMPLEDIR)/spmc_benchmark.c ../spmc_2004/spmc_queue.o \
+	$(CC) $(CFLAGS) -I$(INCDIR) -I../spmc_2017/src -I../mpi_lib/include \
+		$(EXAMPLEDIR)/spmc_benchmark.c ../spmc_2017/build/spmc_queue.o \
 		$(LIBDIR)/$(STATIC_LIB) ../mpi_lib/lib/libmpi_wrapper.a \
 		-lm -o $(EXAMPLEDIR)/spmc_benchmark
 
@@ -64,22 +64,22 @@ test: test-quick test-throughput test-latency
 
 test-quick: spmc_benchmark
 	@echo "Running quick benchmark test..."
-	cd $(EXAMPLEDIR) && mpirun --allow-run-as-root -np 3 ./spmc_benchmark quick
+	cd $(EXAMPLEDIR) && mpirun -np 3 ./spmc_benchmark quick
 
 test-throughput: spmc_benchmark
 	@echo "Running throughput benchmark test..."
-	cd $(EXAMPLEDIR) && mpirun --allow-run-as-root -np 4 ./spmc_benchmark throughput
+	cd $(EXAMPLEDIR) && mpirun -np 4 ./spmc_benchmark throughput
 
 test-latency: spmc_benchmark
 	@echo "Running latency benchmark test..."
-	cd $(EXAMPLEDIR) && mpirun --allow-run-as-root -np 3 ./spmc_benchmark latency
+	cd $(EXAMPLEDIR) && mpirun -np 3 ./spmc_benchmark latency
 
 test-all: spmc_benchmark
 	@echo "Running comprehensive benchmark suite..."
-	cd $(EXAMPLEDIR) && mpirun --allow-run-as-root -np 3 ./spmc_benchmark quick
-	cd $(EXAMPLEDIR) && mpirun --allow-run-as-root -np 4 ./spmc_benchmark throughput
-	cd $(EXAMPLEDIR) && mpirun --allow-run-as-root -np 3 ./spmc_benchmark latency
-	cd $(EXAMPLEDIR) && mpirun --allow-run-as-root -np 6 ./spmc_benchmark scalability
+	cd $(EXAMPLEDIR) && mpirun -np 3 ./spmc_benchmark quick
+	cd $(EXAMPLEDIR) && mpirun -np 4 ./spmc_benchmark throughput
+	cd $(EXAMPLEDIR) && mpirun -np 3 ./spmc_benchmark latency
+	cd $(EXAMPLEDIR) && mpirun -np 6 ./spmc_benchmark scalability
 
 # Clean targets
 clean:

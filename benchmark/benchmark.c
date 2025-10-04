@@ -185,6 +185,13 @@ void benchmark_stop(benchmark_ctx_t *ctx) {
     
     ctx->results.total_time_sec = elapsed_sec;
     
+    // Initialize all results to 0 to prevent MPI issues with uninitialized values
+    ctx->results.avg_enqueue_latency_us = 0.0;
+    ctx->results.max_enqueue_latency_us = 0.0;
+    ctx->results.avg_dequeue_latency_us = 0.0;
+    ctx->results.max_dequeue_latency_us = 0.0;
+    ctx->results.memory_peak_kb = 0;
+    
     // Calculate local statistics
     process_stats_t *stats = &ctx->local_stats;
     
