@@ -432,6 +432,15 @@ build_and_link_spmc_benchmark() {
         log_error "Failed to link benchmark executable"
         return 1
     fi
+    
+    # Set executable permissions for the created file
+    chmod +x "$exe_out"
+    if [[ $? -eq 0 ]]; then
+        log_info "Set executable permissions for: $exe_out"
+    else
+        log_warning "Failed to set executable permissions for: $exe_out"
+    fi
+    
     log_success "Benchmark executable created: $exe_out"
     echo "$exe_out"
 }
