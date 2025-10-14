@@ -543,7 +543,75 @@ run_benchmark() {
         return 1
     fi
 
-
+    # Synchronize executable to all MPI hosts if specified
+    if [[ -n "$MPI_HOSTS" ]]; then
+        log_info "Synchronizing executable to all MPI hosts: $MPI_HOSTS"
+        
+        # Convert comma-separated hosts to array
+        IFS=',' read -ra HOST_ARRAY <<< "$MPI_HOSTS"
+        
+        for host in "${HOST_ARRAY[@]}"; do
+            # Skip synchronizing to localhost/current host
+            if [[ "$host" != "$(hostname)" && "$host" != "localhost" && "$host" != "127.0.0.1" ]]; then
+                log_info "Syncing executable to $host..."
+                
+                # First create the directory on remote host
+                if ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" "mkdir -p '$(dirname "$spmc_executable")'" 2>/dev/null; then
+                    # Then sync the executable
+                    if rsync -aqz "$spmc_executable" "${host}:${spmc_executable}" 2>/dev/null; then
+                        log_success "Successfully synced executable to $host"
+                        # Set executable permissions on remote host
+                        ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" "chmod +x '$spmc_executable'" 2>/dev/null
+                    else
+                        log_error "Failed to sync executable to $host via rsync"
+                        # Fallback: try scp
+                        if scp -o ConnectTimeout=10 -o BatchMode=yes "$spmc_executable" "${host}:${spmc_executable}" 2>/dev/null; then
+                            log_success "Successfully synced executable to $host via scp"
+                            ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" "chmod +x '$spmc_executable'" 2>/dev/null
+                        else
+                            log_error "Failed to sync executable to $host (both rsync and scp failed)"
+                        fi
+                    fi
+                else
+                    log_error "Failed to create directory on $host: $(dirname "$spmc_executable")"
+                fi
+            else
+                log_info "Skipping sync to local host: $host"
+            fi
+        done
+        log_success "Executable synchronization completed"
+        
+        # Also synchronize required libraries to all hosts
+        log_info "Synchronizing required libraries to all MPI hosts..."
+        local lib_dirs=(
+            "${BENCHMARK_DIR}/lib"
+            "${WORKSPACE_DIR}/mpi_lib/lib"
+        )
+        
+        for lib_dir in "${lib_dirs[@]}"; do
+            if [[ -d "$lib_dir" ]]; then
+                log_info "Syncing library directory: $lib_dir"
+                for host in "${HOST_ARRAY[@]}"; do
+                    if [[ "$host" != "$(hostname)" && "$host" != "localhost" && "$host" != "127.0.0.1" ]]; then
+                        # Create library directory on remote host
+                        if ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" "mkdir -p '$lib_dir'" 2>/dev/null; then
+                            # Sync all library files
+                            if rsync -aqz "$lib_dir/" "${host}:${lib_dir}/" 2>/dev/null; then
+                                log_success "Successfully synced libraries to $host:$lib_dir"
+                            else
+                                log_warning "Failed to sync libraries to $host:$lib_dir"
+                            fi
+                        else
+                            log_warning "Failed to create library directory on $host: $lib_dir"
+                        fi
+                    fi
+                done
+            else
+                log_warning "Library directory not found: $lib_dir"
+            fi
+        done
+        log_success "Library synchronization completed"
+    fi
     
     # Check library dependencies before running
     if ! check_library_dependencies "$spmc_executable"; then
