@@ -39,13 +39,13 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // Print initial information
+    // Print initial information - header and common info only from enqueuer
     if (spmc_queue_is_enqueuer(&queue)) {
         printf("\\n=== SPMC Queue Benchmark Suite ===\\n");
         printf("Test type: %s\\n", test_type);
-        mpi_print_info(&queue.mpi_ctx);
         printf("\\n");
     }
+    mpi_print_info(&queue.mpi_ctx);
     
     // Run the benchmark
     int result = run_benchmark_test(&queue, test_type);
