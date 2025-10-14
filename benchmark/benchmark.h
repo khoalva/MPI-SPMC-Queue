@@ -36,10 +36,13 @@ typedef struct {
 // Performance metrics structure
 typedef struct {
     double total_time_sec;      // Total execution time
-    double throughput_items_per_sec; // Items processed per second
+    double enqueue_throughput_items_per_sec; // Items enqueued per second
+    double dequeue_throughput_items_per_sec; // Items dequeued per second
     double avg_enqueue_latency_us;   // Average enqueue latency
     double avg_dequeue_latency_us;   // Average dequeue latency
+    double min_enqueue_latency_us;   // Minimum enqueue latency
     double max_enqueue_latency_us;   // Maximum enqueue latency
+    double min_dequeue_latency_us;   // Minimum dequeue latency
     double max_dequeue_latency_us;   // Maximum dequeue latency
     long total_items_produced;      // Total items enqueued
     long total_items_consumed;      // Total items dequeued

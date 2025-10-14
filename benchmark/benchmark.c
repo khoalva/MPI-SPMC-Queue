@@ -185,12 +185,10 @@ void benchmark_stop(benchmark_ctx_t *ctx) {
     
     ctx->results.total_time_sec = elapsed_sec;
     
-    // Initialize all results to 0 to prevent MPI issues with uninitialized values
-    ctx->results.avg_enqueue_latency_us = 0.0;
-    ctx->results.max_enqueue_latency_us = 0.0;
-    ctx->results.avg_dequeue_latency_us = 0.0;
-    ctx->results.max_dequeue_latency_us = 0.0;
+    // Initialize results to 0 to prevent MPI issues with uninitialized values
     ctx->results.memory_peak_kb = 0;
+    ctx->results.enqueue_throughput_items_per_sec = 0.0;
+    ctx->results.dequeue_throughput_items_per_sec = 0.0;
     
     // Calculate local statistics
     process_stats_t *stats = &ctx->local_stats;
@@ -247,9 +245,11 @@ int benchmark_aggregate_results(benchmark_ctx_t *ctx, void *mpi_comm) {
         ctx->results.total_items_consumed = ctx->results.total_items_produced;
     }
     
-    // Calculate throughput
+    // Calculate separate throughputs
     if (ctx->results.total_time_sec > 0) {
-        ctx->results.throughput_items_per_sec = 
+        ctx->results.enqueue_throughput_items_per_sec = 
+            ctx->results.total_items_produced / ctx->results.total_time_sec;
+        ctx->results.dequeue_throughput_items_per_sec = 
             ctx->results.total_items_consumed / ctx->results.total_time_sec;
     }
     
@@ -288,13 +288,56 @@ int benchmark_aggregate_results(benchmark_ctx_t *ctx, void *mpi_comm) {
     
     // Aggregate latency statistics
     double max_enqueue_latency, max_dequeue_latency;
+    double min_enqueue_latency, min_dequeue_latency;
+    
+    // Get local min/max values
+    double local_min_enqueue = ctx->local_stats.min_enqueue_latency_us;
+    double local_min_dequeue = ctx->local_stats.min_dequeue_latency_us;
+    
+    // Handle case where no operations were performed (set to very high value for min)
+    if (ctx->local_stats.items_produced == 0) local_min_enqueue = 1e9;
+    if (ctx->local_stats.items_consumed == 0) local_min_dequeue = 1e9;
+    
+    // Aggregate maximum latencies
     MPI_Allreduce(&ctx->results.max_enqueue_latency_us, &max_enqueue_latency, 
                   1, MPI_DOUBLE, MPI_MAX, comm);
     MPI_Allreduce(&ctx->results.max_dequeue_latency_us, &max_dequeue_latency, 
                   1, MPI_DOUBLE, MPI_MAX, comm);
     
+    // Aggregate minimum latencies
+    MPI_Allreduce(&local_min_enqueue, &min_enqueue_latency, 
+                  1, MPI_DOUBLE, MPI_MIN, comm);
+    MPI_Allreduce(&local_min_dequeue, &min_dequeue_latency, 
+                  1, MPI_DOUBLE, MPI_MIN, comm);
+    
+    // Aggregate average latencies (weighted by number of operations)
+    double local_enqueue_total = ctx->local_stats.total_enqueue_time_us;
+    double local_dequeue_total = ctx->local_stats.total_dequeue_time_us;
+    long local_enqueue_count = ctx->local_stats.items_produced;
+    long local_dequeue_count = ctx->local_stats.items_consumed;
+    
+    double global_enqueue_total, global_dequeue_total;
+    long global_enqueue_count, global_dequeue_count;
+    
+    MPI_Allreduce(&local_enqueue_total, &global_enqueue_total, 1, MPI_DOUBLE, MPI_SUM, comm);
+    MPI_Allreduce(&local_dequeue_total, &global_dequeue_total, 1, MPI_DOUBLE, MPI_SUM, comm);
+    MPI_Allreduce(&local_enqueue_count, &global_enqueue_count, 1, MPI_LONG, MPI_SUM, comm);
+    MPI_Allreduce(&local_dequeue_count, &global_dequeue_count, 1, MPI_LONG, MPI_SUM, comm);
+    
+    // Calculate global average latencies
+    if (global_enqueue_count > 0) {
+        ctx->results.avg_enqueue_latency_us = global_enqueue_total / global_enqueue_count;
+    }
+    if (global_dequeue_count > 0) {
+        ctx->results.avg_dequeue_latency_us = global_dequeue_total / global_dequeue_count;
+    }
+    
     ctx->results.max_enqueue_latency_us = max_enqueue_latency;
     ctx->results.max_dequeue_latency_us = max_dequeue_latency;
+    
+    // Set minimum latencies (handle case where no operations occurred)
+    ctx->results.min_enqueue_latency_us = (min_enqueue_latency < 1e8) ? min_enqueue_latency : 0.0;
+    ctx->results.min_dequeue_latency_us = (min_dequeue_latency < 1e8) ? min_dequeue_latency : 0.0;
     
     // Aggregate memory usage
     if (ctx->config.enable_memory_tracking) {
@@ -322,20 +365,19 @@ void benchmark_print_report(const benchmark_ctx_t *ctx) {
     printf("  Total execution time:     %.3f seconds\\n", ctx->results.total_time_sec);
     printf("  Total items produced:     %ld\\n", ctx->results.total_items_produced);
     printf("  Total items consumed:     %ld\\n", ctx->results.total_items_consumed);
-    printf("  Throughput:              %.2f items/second\\n", ctx->results.throughput_items_per_sec);
+    printf("  Enqueue throughput:      %.2f items/second\\n", ctx->results.enqueue_throughput_items_per_sec);
+    printf("  Dequeue throughput:      %.2f items/second\\n", ctx->results.dequeue_throughput_items_per_sec);
     printf("  Load balance score:       %d/100\\n", ctx->results.load_balance_score);
     
-    if (ctx->results.avg_enqueue_latency_us > 0) {
-        printf("\\nEnqueue Latency:\\n");
-        printf("  Average:                 %.2f μs\\n", ctx->results.avg_enqueue_latency_us);
-        printf("  Maximum:                 %.2f μs\\n", ctx->results.max_enqueue_latency_us);
-    }
+    printf("\\nEnqueue Latency:\\n");
+    printf("  Minimum:                 %.2f μs\\n", ctx->results.min_enqueue_latency_us);
+    printf("  Average:                 %.2f μs\\n", ctx->results.avg_enqueue_latency_us);
+    printf("  Maximum:                 %.2f μs\\n", ctx->results.max_enqueue_latency_us);
     
-    if (ctx->results.avg_dequeue_latency_us > 0) {
-        printf("\\nDequeue Latency:\\n");
-        printf("  Average:                 %.2f μs\\n", ctx->results.avg_dequeue_latency_us);
-        printf("  Maximum:                 %.2f μs\\n", ctx->results.max_dequeue_latency_us);
-    }
+    printf("\\nDequeue Latency:\\n");
+    printf("  Minimum:                 %.2f μs\\n", ctx->results.min_dequeue_latency_us);
+    printf("  Average:                 %.2f μs\\n", ctx->results.avg_dequeue_latency_us);
+    printf("  Maximum:                 %.2f μs\\n", ctx->results.max_dequeue_latency_us);
     
     if (ctx->config.enable_memory_tracking) {
         printf("\nMemory Usage:\n");
@@ -366,18 +408,19 @@ int benchmark_export_csv(const benchmark_ctx_t *ctx, const char *filename) {
     
     // Write CSV header
     fprintf(fp, "Test_Name,MPI_Size,Total_Time_Sec,Items_Produced,Items_Consumed,");
-    fprintf(fp, "Throughput_Items_Per_Sec,Avg_Enqueue_Latency_Us,Max_Enqueue_Latency_Us,");
-    fprintf(fp, "Avg_Dequeue_Latency_Us,Max_Dequeue_Latency_Us,Memory_Peak_KB,Load_Balance_Score,");
-    fprintf(fp, "Queue_Capacity_Bytes\n");
+    fprintf(fp, "Enqueue_Throughput_Items_Per_Sec,Dequeue_Throughput_Items_Per_Sec,");
+    fprintf(fp, "Min_Enqueue_Latency_Us,Avg_Enqueue_Latency_Us,Max_Enqueue_Latency_Us,");
+    fprintf(fp, "Min_Dequeue_Latency_Us,Avg_Dequeue_Latency_Us,Max_Dequeue_Latency_Us,");
+    fprintf(fp, "Memory_Peak_KB,Load_Balance_Score,Queue_Capacity_Bytes\n");
 
     // Write data with better formatting
-    fprintf(fp, "\"%s\",%d,%.3f,%ld,%ld,%.2f,%.2f,%.2f,%.2f,%.2f,%ld,%d,%ld\n",
+    fprintf(fp, "\"%s\",%d,%.3f,%ld,%ld,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%ld,%d,%ld\n",
             ctx->config.test_name, ctx->mpi_size, ctx->results.total_time_sec,
             ctx->results.total_items_produced, ctx->results.total_items_consumed,
-            ctx->results.throughput_items_per_sec, ctx->results.avg_enqueue_latency_us,
-            ctx->results.max_enqueue_latency_us, ctx->results.avg_dequeue_latency_us,
-            ctx->results.max_dequeue_latency_us, ctx->results.memory_peak_kb,
-            ctx->results.load_balance_score,
+            ctx->results.enqueue_throughput_items_per_sec, ctx->results.dequeue_throughput_items_per_sec, 
+            ctx->results.min_enqueue_latency_us, ctx->results.avg_enqueue_latency_us, ctx->results.max_enqueue_latency_us,
+            ctx->results.min_dequeue_latency_us, ctx->results.avg_dequeue_latency_us, ctx->results.max_dequeue_latency_us, 
+            ctx->results.memory_peak_kb, ctx->results.load_balance_score,
             ctx->results.queue_capacity_bytes);
     
     fclose(fp);
