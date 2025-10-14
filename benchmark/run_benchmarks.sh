@@ -169,7 +169,11 @@ create_directories_on_nodes() {
     if [[ -n "$MPI_HOSTS" ]]; then
         log_info "Creating directories on all MPI hosts: $MPI_HOSTS"
         
-        # Build MPI command similar to benchmark execution
+        # Convert comma-separated hosts to array
+        IFS=',' read -ra HOST_ARRAY <<< "$MPI_HOSTS"
+        local num_hosts=${#HOST_ARRAY[@]}
+        
+        # Build base MPI command
         local mpi_cmd=""
         local mpi_version=$(mpirun --version 2>&1 | head -1)
         
@@ -185,18 +189,52 @@ create_directories_on_nodes() {
         else
             # Fallback
             mpi_cmd="mpirun"
+            log_warning "Unknown MPI implementation, using basic mpirun"
         fi
         
-        mpi_cmd="$mpi_cmd -hosts $MPI_HOSTS -np 1"
-        
+        # Create directories on each host
         for dir in "${dirs[@]}"; do
             log_info "Creating directory on all nodes: $dir"
+            
+            # Method 1: Use mpirun with all hosts to run mkdir on each
+            local full_cmd="$mpi_cmd -hosts $MPI_HOSTS -np $num_hosts mkdir -p \"$dir\""
+            
             if echo "$mpi_version" | grep -qi "open.mpi\|openmpi"; then
-                OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 $mpi_cmd mkdir -p "$dir"
+                if OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 timeout 30 $mpi_cmd -hosts "$MPI_HOSTS" -np "$num_hosts" mkdir -p "$dir" 2>/dev/null; then
+                    log_success "Successfully created directory $dir on all nodes"
+                else
+                    log_warning "MPI mkdir failed, trying individual SSH approach..."
+                    # Fallback: SSH to each host individually
+                    for host in "${HOST_ARRAY[@]}"; do
+                        log_info "Creating directory $dir on host: $host"
+                        if ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" "mkdir -p '$dir'" 2>/dev/null; then
+                            log_success "Created directory $dir on $host via SSH"
+                        else
+                            log_error "Failed to create directory $dir on $host"
+                        fi
+                    done
+                fi
             else
-                $mpi_cmd mkdir -p "$dir"
+                if timeout 30 $mpi_cmd -hosts "$MPI_HOSTS" -np "$num_hosts" mkdir -p "$dir" 2>/dev/null; then
+                    log_success "Successfully created directory $dir on all nodes"
+                else
+                    log_warning "MPI mkdir failed, trying individual SSH approach..."
+                    # Fallback: SSH to each host individually
+                    for host in "${HOST_ARRAY[@]}"; do
+                        log_info "Creating directory $dir on host: $host"
+                        if ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" "mkdir -p '$dir'" 2>/dev/null; then
+                            log_success "Created directory $dir on $host via SSH"
+                        else
+                            log_error "Failed to create directory $dir on $host"
+                        fi
+                    done
+                fi
             fi
         done
+        
+        # Also create locally
+        log_info "Creating directories locally as well"
+        mkdir -p "${dirs[@]}"
     else
         # Local creation if no hosts specified
         mkdir -p "${dirs[@]}"
