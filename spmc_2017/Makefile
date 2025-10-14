@@ -3,6 +3,9 @@ CC = mpicc
 CFLAGS = -Wall -Wextra -O2 -std=c99 -g
 LDFLAGS = -lm
 
+# Optional hosts (use make HOSTS="host1,host2,..." run-X to specify)
+# HOSTS can be set from command line, if not set, -hosts option will be omitted
+
 # Directories
 SRC_DIR = src
 BUILD_DIR = build
@@ -55,15 +58,15 @@ clean:
 # Run with different process counts (with proper library path)
 run-2: $(TARGET)
 	@echo "Running with 2 processes (1 producer, 1 consumer)..."
-	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun  -np 2 $(TARGET)
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun $(if $(HOSTS),-hosts $(HOSTS)) -np 2 $(TARGET)
 
 run-4: $(TARGET)
 	@echo "Running with 4 processes (1 producer, 3 consumers)..."
-	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun  -np 4 $(TARGET)
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun $(if $(HOSTS),-hosts $(HOSTS)) -np 4 $(TARGET)
 
 run-8: $(TARGET)
 	@echo "Running with 8 processes (1 producer, 7 consumers)..."
-	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun  -np 8 $(TARGET)
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun $(if $(HOSTS),-hosts $(HOSTS)) -np 8 $(TARGET)
 
 # Debug version
 debug: CFLAGS += -DDEBUG -g -O0
@@ -93,6 +96,11 @@ help:
 	@echo "  run-8      - Run with 8 processes"
 	@echo "  check-deps - Check if dependencies are available"
 	@echo "  help       - Show this help message"
+	@echo ""
+	@echo "Usage examples:"
+	@echo "  make run-2                                    - Run without specifying hosts"
+	@echo "  make HOSTS=\"node1,node2\" run-4               - Run with specific hosts"
+	@echo "  make HOSTS=\"localhost,node1,node2\" run-8     - Run with custom host list"
 
 # Directory structure:
 # - include/  : Header files (*.h)
