@@ -162,8 +162,49 @@ if [[ -z "$OUTPUT_DIR" ]]; then
     OUTPUT_DIR="$RESULTS_DIR"
 fi
 
+# Function to create directories on all nodes (if hosts specified)
+create_directories_on_nodes() {
+    local dirs=("$@")
+    
+    if [[ -n "$MPI_HOSTS" ]]; then
+        log_info "Creating directories on all MPI hosts: $MPI_HOSTS"
+        
+        # Build MPI command similar to benchmark execution
+        local mpi_cmd=""
+        local mpi_version=$(mpirun --version 2>&1 | head -1)
+        
+        if echo "$mpi_version" | grep -qi "open.mpi\|openmpi"; then
+            # OpenMPI
+            mpi_cmd="mpirun"
+            if [[ -n "${WSL_DISTRO_NAME}" ]] || [[ "$EUID" -eq 0 ]]; then
+                mpi_cmd="$mpi_cmd --allow-run-as-root"
+            fi
+        elif echo "$mpi_version" | grep -qi "mpich\|hydra"; then
+            # MPICH
+            mpi_cmd="mpirun"
+        else
+            # Fallback
+            mpi_cmd="mpirun"
+        fi
+        
+        mpi_cmd="$mpi_cmd -hosts $MPI_HOSTS -np 1"
+        
+        for dir in "${dirs[@]}"; do
+            log_info "Creating directory on all nodes: $dir"
+            if echo "$mpi_version" | grep -qi "open.mpi\|openmpi"; then
+                OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 $mpi_cmd mkdir -p "$dir"
+            else
+                $mpi_cmd mkdir -p "$dir"
+            fi
+        done
+    else
+        # Local creation if no hosts specified
+        mkdir -p "${dirs[@]}"
+    fi
+}
+
 # Create output directories
-mkdir -p "$OUTPUT_DIR" "$LOG_DIR"
+create_directories_on_nodes "$OUTPUT_DIR" "$LOG_DIR"
 
 # Function to check library dependencies
 check_library_dependencies() {
@@ -413,7 +454,7 @@ build_and_link_spmc_benchmark() {
         return 1
     fi
 
-    mkdir -p "${BENCHMARK_DIR}/bin"
+    create_directories_on_nodes "${BENCHMARK_DIR}/bin"
     mpicc -c "${BENCHMARK_DIR}/examples/spmc_benchmark.c" -I"$spmc_path" -I"$spmc_path/src" -I"${WORKSPACE_DIR}/mpi_lib/include" -o "$benchmark_obj"
     if [[ $? -ne 0 ]]; then
         log_error "Failed to build benchmark object file"
@@ -689,13 +730,13 @@ main() {
     fi
     
     # Create output directory
-    mkdir -p "$OUTPUT_DIR"
+    create_directories_on_nodes "$OUTPUT_DIR"
     
     # Create session folder for this benchmark run
     local session_timestamp=$(date +"%Y%m%d_%H%M%S")
     local spmc_name=$(basename "$spmc_path")
     local session_folder="${OUTPUT_DIR}/session_${spmc_name}_${session_timestamp}"
-    mkdir -p "$session_folder"
+    create_directories_on_nodes "$session_folder"
     log_info "Results will be saved to: $session_folder"
     echo ""
     
