@@ -77,22 +77,23 @@ static int run_benchmark_test(spmc_queue_t *queue, const char *test_type) {
         // Producer workload
         printf("Rank %d: Starting PRODUCER benchmark\\n", mpi_rank);
         
-        // Generate test values
-        int *values = malloc(config.num_items * sizeof(int));
+        // Generate test values - allocate for both warmup and benchmark items
+        int total_items = config.warmup_items + config.num_items;
+        int *values = malloc(total_items * sizeof(int));
         if (!values) {
-            fprintf(stderr, "Failed to allocate memory for test values\\n");
+            fprintf(stderr, "Failed to allocate memory for test values\n");
             benchmark_cleanup(&bench_ctx);
             return 1;
         }
         
-        for (int i = 0; i < config.num_items; i++) {
+        for (int i = 0; i < total_items; i++) {
             values[i] = 100 + (i % 900); // Values between 100-999
         }
         
         // Warmup phase
         if (config.warmup_items > 0) {
-            printf("Rank %d: Warmup phase - enqueuing %d items\\n", mpi_rank, config.warmup_items);
-            for (int i = 0; i < config.warmup_items && i < config.num_items; i++) {
+            printf("Rank %d: Warmup phase - enqueuing %d items\n", mpi_rank, config.warmup_items);
+            for (int i = 0; i < config.warmup_items; i++) {
                 spmc_queue_enqueue(queue, values[i]);
                 if (config.producer_delay_us > 0) {
                     usleep(config.producer_delay_us);
@@ -100,31 +101,36 @@ static int run_benchmark_test(spmc_queue_t *queue, const char *test_type) {
             }
         }
         
-        // Benchmark phase
-        printf("Rank %d: Benchmark phase - enqueuing %d items\\n", mpi_rank, config.num_items);
+        // Benchmark phase - only enqueue num_items, not starting from 0 again
+        printf("Rank %d: Benchmark phase - enqueuing %d items\n", mpi_rank, config.num_items);
         for (int i = 0; i < config.num_items; i++) {
-            BENCHMARK_RECORD_ENQUEUE(&bench_ctx, spmc_queue_enqueue(queue, values[i]));
+            int value_index = config.warmup_items + i; // Continue from where warmup left off
+            if (value_index < config.warmup_items + config.num_items) {
+                BENCHMARK_RECORD_ENQUEUE(&bench_ctx, spmc_queue_enqueue(queue, values[value_index % (config.warmup_items + config.num_items)]));
+            }
             
             if (config.producer_delay_us > 0) {
                 usleep(config.producer_delay_us);
             }
         }
         
-        printf("Rank %d: Producer completed %d enqueue operations\\n", mpi_rank, config.num_items);
+        printf("Rank %d: Producer completed %d warmup + %d benchmark = %d total enqueue operations\n", 
+               mpi_rank, config.warmup_items, config.num_items, config.warmup_items + config.num_items);
         free(values);
         
     } else {
         // Consumer workload
-        printf("Rank %d: Starting CONSUMER benchmark\\n", mpi_rank);
+        printf("Rank %d: Starting CONSUMER benchmark\n", mpi_rank);
         
         int items_consumed = 0;
         int empty_attempts = 0;
         int max_empty_attempts = 100; // Stop after 100 consecutive empty attempts
+        int total_items_to_consume = config.warmup_items + config.num_items; // Include warmup items
         
         struct timeval start_time, current_time;
         gettimeofday(&start_time, NULL);
         
-        while (items_consumed < config.num_items && empty_attempts < max_empty_attempts) {
+        while (items_consumed < total_items_to_consume && empty_attempts < max_empty_attempts) {
             int value;
             BENCHMARK_RECORD_DEQUEUE(&bench_ctx, value = spmc_queue_dequeue(queue));
             

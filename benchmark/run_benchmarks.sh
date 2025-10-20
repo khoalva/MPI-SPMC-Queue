@@ -481,14 +481,29 @@ build_and_link_spmc_benchmark() {
     local benchmark_obj="${BENCHMARK_DIR}/examples/spmc_benchmark.o"
     local exe_out="${BENCHMARK_DIR}/bin/benchmark_${spmc_name}"
 
-    # Tìm file object ở hai vị trí phổ biến
-    local spmc_obj=""
-    if [[ -f "${spmc_path}/build/spmc_queue.o" ]]; then
-        spmc_obj="${spmc_path}/build/spmc_queue.o"
+    # Tìm static library hoặc object files
+    local spmc_libs=""
+    local link_method=""
+    
+    # Ưu tiên static library nếu có
+    if [[ -f "${spmc_path}/build/libspmc_gwmq.a" ]]; then
+        spmc_libs="${spmc_path}/build/libspmc_gwmq.a"
+        link_method="static_lib"
+        log_info "Using static library: ${spmc_libs}"
+    elif [[ -f "${spmc_path}/build/spmc_queue.o" && -f "${spmc_path}/build/bitmap.o" ]]; then
+        spmc_libs="${spmc_path}/build/spmc_queue.o ${spmc_path}/build/bitmap.o"
+        link_method="objects"
+        log_info "Using object files: ${spmc_libs}"
+    elif [[ -f "${spmc_path}/build/spmc_queue.o" ]]; then
+        spmc_libs="${spmc_path}/build/spmc_queue.o"
+        link_method="single_object"
+        log_info "Using single object file: ${spmc_libs}"
     elif [[ -f "${spmc_path}/spmc_queue.o" ]]; then
-        spmc_obj="${spmc_path}/spmc_queue.o"
+        spmc_libs="${spmc_path}/spmc_queue.o"
+        link_method="single_object"
+        log_info "Using single object file: ${spmc_libs}"
     else
-        log_error "SPMC object file not found in build/ or root: ${spmc_path}"
+        log_error "SPMC library/object files not found in: ${spmc_path}"
         return 1
     fi
 
@@ -499,7 +514,7 @@ build_and_link_spmc_benchmark() {
         return 1
     fi
 
-    mpicc "$benchmark_obj" "$spmc_obj" \
+    mpicc "$benchmark_obj" $spmc_libs \
         -o "$exe_out" \
         -I"$spmc_path" \
         -I"$spmc_path/src" \

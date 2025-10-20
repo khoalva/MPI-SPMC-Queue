@@ -24,16 +24,28 @@ LIBS = -L$(MPI_LIB_DIR)/lib -lmpi_wrapper
 LDFLAGS += -Wl,-rpath,$(MPI_LIB_DIR)/lib
 
 # Source files
-SOURCES = $(SRC_DIR)/main_spmc.c $(SRC_DIR)/spmc_queue.c
-# SOURCES =  $(SRC_DIR)/spmc_queue.c
+SOURCES = $(SRC_DIR)/main_spmc.c $(SRC_DIR)/spmc_queue.c $(SRC_DIR)/bitmap.c
 OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
-# Target executable
+# Library source files (without main)
+LIB_SOURCES = $(SRC_DIR)/spmc_queue.c $(SRC_DIR)/bitmap.c
+LIB_OBJECTS = $(LIB_SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
+
+# Target executable and library
 TARGET = $(BIN_DIR)/spmc_queue
+STATIC_LIB = $(BUILD_DIR)/libspmc_gwmq.a
 
-.PHONY: all clean dirs run-2 run-4 run-8 debug release check-deps help
+.PHONY: all clean dirs run-2 run-4 run-8 debug release check-deps help lib
 
-all: dirs $(TARGET)
+all: dirs $(TARGET) $(STATIC_LIB)
+
+# Static library target
+lib: $(STATIC_LIB)
+
+$(STATIC_LIB): $(LIB_OBJECTS)
+	@echo "Creating static library $@..."
+	ar rcs $@ $(LIB_OBJECTS)
+	@echo "Static library created: $@"
 
 # Create directories
 dirs:

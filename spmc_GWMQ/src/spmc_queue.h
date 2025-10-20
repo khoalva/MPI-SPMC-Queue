@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "mpi_lib.h"
+#include "bitmap.h"
 
 #define L -1 // ⊥ (empty cell)
 #define T -2 // ⊤ (dequeued cell)
@@ -19,12 +20,6 @@ typedef uint64_t cell_t;
 #define GET_DATA(cell) ((int)(uint32_t)((cell) & 0xFFFFFFFFULL))
 #define GET_GEN(cell) ((int)(uint32_t)((cell) >> 32))
 #define MAKE_CELL(data, gen) PACK_CELL(data, gen)
-
-typedef struct{
-    int rows, cols;
-    int words_per_row;
-    uint64_t *data;
-} bitmap_t;
 
 typedef struct{
     int tail;
@@ -59,7 +54,7 @@ typedef struct{
     mpi_window_t win_sync_bitmap;
 } structure_t;
 
-typedef struct {
+typedef struct spmc_queue {
     mpi_context_t mpi_ctx; // Must have MPI context for communication
 
     producer_t* p;
@@ -67,8 +62,6 @@ typedef struct {
     structure_t* q;
 
 } spmc_queue_t;
-
-
 
 // Must have for benchmark compatibility
 int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]);
@@ -78,21 +71,4 @@ int spmc_queue_dequeue(spmc_queue_t *queue);
 void spmc_queue_print_stats(spmc_queue_t *queue);
 int spmc_queue_is_enqueuer(spmc_queue_t *queue);
 size_t spmc_queue_get_capacity_bytes(const spmc_queue_t *queue);
-
-// Can add more utility functions and structs as needed
-void bitmap_init(bitmap_t *map, int rows, int words_per_row);
-void bitmap_destroy(bitmap_t *map);
-int check_bit(uint64_t *map, int col);
-void set_bit(uint64_t *row, int col);
-void sync_bitmap_row(spmc_queue_t *queue, int row, bitmap_t* local_bitmap);
-void set_all_bits(bitmap_t* bitmap, int row) ;
-void set_all_bits_full(bitmap_t* bitmap) ;
-void print_queue_bitmaps(spmc_queue_t *queue, int max_rows, int max_cols);
-void print_bitmap(bitmap_t* bitmap, int max_rows, int max_cols, const char* title) ;
-
-
-int find_Nth_safe_index(int N, bitmap_t* sync_bitmap, int row, int last_index, int last_N);
-int find_safe_index_from(int start, bitmap_t* sync_bitmap, int row);
-int find_nth_set_bit_in_word(uint64_t word, int n) ;
-void heuristic_bitmap(bitmap_t* bitmap, int found_index, int num_consumers) ;
 #endif
