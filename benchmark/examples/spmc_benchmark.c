@@ -116,6 +116,11 @@ static int run_benchmark_test(spmc_queue_t *queue, const char *test_type) {
         
         printf("Rank %d: Producer completed %d warmup + %d benchmark = %d total enqueue operations\n", 
                mpi_rank, config.warmup_items, config.num_items, config.warmup_items + config.num_items);
+        
+        // Record producer finish time for accurate throughput calculation
+        benchmark_record_producer_finish(&bench_ctx);
+        printf("Rank %d: Producer finish time recorded\n", mpi_rank);
+        
         free(values);
         
     } else {
@@ -157,6 +162,10 @@ static int run_benchmark_test(spmc_queue_t *queue, const char *test_type) {
         }
         
         printf("Rank %d: Consumer completed - consumed %d items\\n", mpi_rank, items_consumed);
+        
+        // Record consumer finish time for accurate throughput calculation
+        benchmark_record_consumer_finish(&bench_ctx);
+        printf("Rank %d: Consumer finish time recorded\n", mpi_rank);
     }
     
     // Gán số liệu space complexity cho benchmark_ctx trước khi stop

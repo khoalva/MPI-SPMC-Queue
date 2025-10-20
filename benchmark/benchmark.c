@@ -172,6 +172,34 @@ void benchmark_record_dequeue(benchmark_ctx_t *ctx, double latency_us, int succe
 }
 
 /**
+ * Record when producer finished all enqueue operations
+ */
+void benchmark_record_producer_finish(benchmark_ctx_t *ctx) {
+    if (!ctx) return;
+    
+    struct timeval current_time;
+    gettimeofday(&current_time, NULL);
+    
+    ctx->local_stats.enqueue_finish_time_sec = 
+        (current_time.tv_sec - ctx->start_time.tv_sec) + 
+        (current_time.tv_usec - ctx->start_time.tv_usec) / 1000000.0;
+}
+
+/**
+ * Record when consumer finished all dequeue operations
+ */
+void benchmark_record_consumer_finish(benchmark_ctx_t *ctx) {
+    if (!ctx) return;
+    
+    struct timeval current_time;
+    gettimeofday(&current_time, NULL);
+    
+    ctx->local_stats.dequeue_finish_time_sec = 
+        (current_time.tv_sec - ctx->start_time.tv_sec) + 
+        (current_time.tv_usec - ctx->start_time.tv_usec) / 1000000.0;
+}
+
+/**
  * Stop benchmark and calculate results
  */
 void benchmark_stop(benchmark_ctx_t *ctx) {
@@ -223,6 +251,30 @@ int benchmark_aggregate_results(benchmark_ctx_t *ctx, void *mpi_comm) {
     
     MPI_Comm comm = *((MPI_Comm*)mpi_comm);
     
+    // First, synchronize timing across all processes
+    // Get the earliest start time and latest end time across all processes
+    double local_start_time = ctx->start_time.tv_sec + ctx->start_time.tv_usec / 1000000.0;
+    double local_end_time = ctx->end_time.tv_sec + ctx->end_time.tv_usec / 1000000.0;
+    
+    double global_start_time, global_end_time;
+    MPI_Allreduce(&local_start_time, &global_start_time, 1, MPI_DOUBLE, MPI_MIN, comm);
+    MPI_Allreduce(&local_end_time, &global_end_time, 1, MPI_DOUBLE, MPI_MAX, comm);
+    
+    // Calculate the actual benchmark duration across all processes
+    double actual_benchmark_time = global_end_time - global_start_time;
+    ctx->results.total_time_sec = actual_benchmark_time;
+    
+    // Debug timing information
+    if (ctx->mpi_rank == 0) {
+        printf("\\nTiming Debug Information:\\n");
+        printf("  Global start time:       %.6f seconds\\n", global_start_time);
+        printf("  Global end time:         %.6f seconds\\n", global_end_time);
+        printf("  Actual benchmark time:   %.6f seconds\\n", actual_benchmark_time);
+        printf("  Local execution time:    %.6f seconds\\n", 
+               (ctx->end_time.tv_sec - ctx->start_time.tv_sec) + 
+               (ctx->end_time.tv_usec - ctx->start_time.tv_usec) / 1000000.0);
+    }
+    
     // Aggregate total items produced and consumed
     long local_produced = ctx->local_stats.items_produced;
     long local_consumed = ctx->local_stats.items_consumed;
@@ -245,12 +297,90 @@ int benchmark_aggregate_results(benchmark_ctx_t *ctx, void *mpi_comm) {
         ctx->results.total_items_consumed = ctx->results.total_items_produced;
     }
     
-    // Calculate separate throughputs
-    if (ctx->results.total_time_sec > 0) {
+    // Calculate throughput based on actual finish times
+    // Find the maximum finish time for producers and consumers across all processes
+    double local_enqueue_finish_time = ctx->local_stats.enqueue_finish_time_sec;
+    double local_dequeue_finish_time = ctx->local_stats.dequeue_finish_time_sec;
+    
+    // If this process didn't do enqueue/dequeue, set to 0 (will be ignored in MAX operation)
+    if (ctx->local_stats.items_produced == 0) local_enqueue_finish_time = 0.0;
+    if (ctx->local_stats.items_consumed == 0) local_dequeue_finish_time = 0.0;
+    
+    double max_enqueue_finish_time, max_dequeue_finish_time;
+    MPI_Allreduce(&local_enqueue_finish_time, &max_enqueue_finish_time, 1, MPI_DOUBLE, MPI_MAX, comm);
+    MPI_Allreduce(&local_dequeue_finish_time, &max_dequeue_finish_time, 1, MPI_DOUBLE, MPI_MAX, comm);
+    
+    // Calculate throughput = Total items / Time to complete all operations
+    ctx->results.enqueue_throughput_items_per_sec = 0.0;
+    ctx->results.dequeue_throughput_items_per_sec = 0.0;
+    
+    if (max_enqueue_finish_time > 0) {
         ctx->results.enqueue_throughput_items_per_sec = 
-            ctx->results.total_items_produced / ctx->results.total_time_sec;
+            ctx->results.total_items_produced / max_enqueue_finish_time;
+    } else {
+        // Advanced fallback: Estimate throughput based on operation patterns
+        // Calculate average operation time and estimate effective completion time
+        
+        // Aggregate CPU times to estimate relative performance
+        double local_enqueue_time_sec = ctx->local_stats.total_enqueue_time_us / 1000000.0;
+        double local_dequeue_time_sec = ctx->local_stats.total_dequeue_time_us / 1000000.0;
+        
+        double total_enqueue_cpu_time, total_dequeue_cpu_time;
+        MPI_Allreduce(&local_enqueue_time_sec, &total_enqueue_cpu_time, 1, MPI_DOUBLE, MPI_SUM, comm);
+        MPI_Allreduce(&local_dequeue_time_sec, &total_dequeue_cpu_time, 1, MPI_DOUBLE, MPI_SUM, comm);
+        
+        if (total_enqueue_cpu_time > 0) {
+            // Estimate: Enqueue throughput based on average operation efficiency
+            ctx->results.enqueue_throughput_items_per_sec = 
+                ctx->results.total_items_produced / total_enqueue_cpu_time;
+        } else if (ctx->results.total_time_sec > 0) {
+            // Final fallback to wall-clock time
+            ctx->results.enqueue_throughput_items_per_sec = 
+                ctx->results.total_items_produced / ctx->results.total_time_sec;
+        }
+    }
+    
+    if (max_dequeue_finish_time > 0) {
         ctx->results.dequeue_throughput_items_per_sec = 
-            ctx->results.total_items_consumed / ctx->results.total_time_sec;
+            ctx->results.total_items_consumed / max_dequeue_finish_time;
+    } else {
+        // Advanced fallback: Same approach for dequeue
+        double local_enqueue_time_sec = ctx->local_stats.total_enqueue_time_us / 1000000.0;
+        double local_dequeue_time_sec = ctx->local_stats.total_dequeue_time_us / 1000000.0;
+        
+        double total_enqueue_cpu_time, total_dequeue_cpu_time;
+        MPI_Allreduce(&local_enqueue_time_sec, &total_enqueue_cpu_time, 1, MPI_DOUBLE, MPI_SUM, comm);
+        MPI_Allreduce(&local_dequeue_time_sec, &total_dequeue_cpu_time, 1, MPI_DOUBLE, MPI_SUM, comm);
+        
+        if (total_dequeue_cpu_time > 0) {
+            // Estimate: Dequeue throughput based on average operation efficiency
+            ctx->results.dequeue_throughput_items_per_sec = 
+                ctx->results.total_items_consumed / total_dequeue_cpu_time;
+        } else if (ctx->results.total_time_sec > 0) {
+            // Final fallback to wall-clock time
+            ctx->results.dequeue_throughput_items_per_sec = 
+                ctx->results.total_items_consumed / ctx->results.total_time_sec;
+        }
+    }
+    
+    // Debug: Print detailed throughput analysis
+    if (ctx->mpi_rank == 0) {
+        printf("\\nThroughput Analysis Debug:\\n");
+        printf("  Enqueue finish time:     %.6f seconds (max across all producers)\\n", max_enqueue_finish_time);
+        printf("  Dequeue finish time:     %.6f seconds (max across all consumers)\\n", max_dequeue_finish_time);
+        
+        const char *enqueue_method = (max_enqueue_finish_time > 0) ? "finish-time" : "CPU-time estimate";
+        const char *dequeue_method = (max_dequeue_finish_time > 0) ? "finish-time" : "CPU-time estimate";
+        
+        printf("  Enqueue throughput:      %.2f items/sec (%s method)\\n", 
+               ctx->results.enqueue_throughput_items_per_sec, enqueue_method);
+        printf("  Dequeue throughput:      %.2f items/sec (%s method)\\n", 
+               ctx->results.dequeue_throughput_items_per_sec, dequeue_method);
+               
+        if (max_enqueue_finish_time == 0 || max_dequeue_finish_time == 0) {
+            printf("  WARNING: Finish times not recorded. Using CPU-time estimates.\\n");
+            printf("  For accurate throughput, call benchmark_record_*_finish() functions.\\n");
+        }
     }
     
     // Debug: Print per-process statistics on rank 0
@@ -365,8 +495,21 @@ void benchmark_print_report(const benchmark_ctx_t *ctx) {
     printf("  Total execution time:     %.3f seconds\\n", ctx->results.total_time_sec);
     printf("  Total items produced:     %ld\\n", ctx->results.total_items_produced);
     printf("  Total items consumed:     %ld\\n", ctx->results.total_items_consumed);
-    printf("  Enqueue throughput:      %.2f items/second\\n", ctx->results.enqueue_throughput_items_per_sec);
-    printf("  Dequeue throughput:      %.2f items/second\\n", ctx->results.dequeue_throughput_items_per_sec);
+    
+    // Calculate and display overall throughput (total items processed per second)
+    double overall_throughput = 0.0;
+    if (ctx->results.total_time_sec > 0) {
+        // Use the minimum of produced/consumed as the actual throughput
+        long effective_items = (ctx->results.total_items_consumed < ctx->results.total_items_produced) 
+                              ? ctx->results.total_items_consumed : ctx->results.total_items_produced;
+        overall_throughput = effective_items / ctx->results.total_time_sec;
+    }
+    
+    printf("\\nThroughput Analysis:\\n");
+    printf("  Overall throughput:      %.2f items/second (effective end-to-end)\\n", overall_throughput);
+    printf("  Enqueue throughput:      %.2f items/second (finish-time based)\\n", ctx->results.enqueue_throughput_items_per_sec);
+    printf("  Dequeue throughput:      %.2f items/second (finish-time based)\\n", ctx->results.dequeue_throughput_items_per_sec);
+    printf("\\nSystem Metrics:\\n");
     printf("  Load balance score:       %d/100\\n", ctx->results.load_balance_score);
     
     printf("\\nEnqueue Latency:\\n");
@@ -406,18 +549,26 @@ int benchmark_export_csv(const benchmark_ctx_t *ctx, const char *filename) {
         return -1;
     }
     
+    // Calculate overall throughput for CSV
+    double overall_throughput = 0.0;
+    if (ctx->results.total_time_sec > 0) {
+        long effective_items = (ctx->results.total_items_consumed < ctx->results.total_items_produced) 
+                              ? ctx->results.total_items_consumed : ctx->results.total_items_produced;
+        overall_throughput = effective_items / ctx->results.total_time_sec;
+    }
+    
     // Write CSV header
     fprintf(fp, "Test_Name,MPI_Size,Total_Time_Sec,Items_Produced,Items_Consumed,");
-    fprintf(fp, "Enqueue_Throughput_Items_Per_Sec,Dequeue_Throughput_Items_Per_Sec,");
+    fprintf(fp, "Overall_Throughput_Items_Per_Sec,Enqueue_Throughput_Items_Per_Sec,Dequeue_Throughput_Items_Per_Sec,");
     fprintf(fp, "Min_Enqueue_Latency_Us,Avg_Enqueue_Latency_Us,Max_Enqueue_Latency_Us,");
     fprintf(fp, "Min_Dequeue_Latency_Us,Avg_Dequeue_Latency_Us,Max_Dequeue_Latency_Us,");
     fprintf(fp, "Memory_Peak_KB,Load_Balance_Score,Queue_Capacity_Bytes\n");
 
     // Write data with better formatting
-    fprintf(fp, "\"%s\",%d,%.3f,%ld,%ld,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%ld,%d,%ld\n",
+    fprintf(fp, "\"%s\",%d,%.3f,%ld,%ld,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%ld,%d,%ld\n",
             ctx->config.test_name, ctx->mpi_size, ctx->results.total_time_sec,
             ctx->results.total_items_produced, ctx->results.total_items_consumed,
-            ctx->results.enqueue_throughput_items_per_sec, ctx->results.dequeue_throughput_items_per_sec, 
+            overall_throughput, ctx->results.enqueue_throughput_items_per_sec, ctx->results.dequeue_throughput_items_per_sec, 
             ctx->results.min_enqueue_latency_us, ctx->results.avg_enqueue_latency_us, ctx->results.max_enqueue_latency_us,
             ctx->results.min_dequeue_latency_us, ctx->results.avg_dequeue_latency_us, ctx->results.max_dequeue_latency_us, 
             ctx->results.memory_peak_kb, ctx->results.load_balance_score,
@@ -532,6 +683,8 @@ static void benchmark_init_stats(process_stats_t *stats, int rank) {
     stats->max_enqueue_latency_us = 0.0;
     stats->min_dequeue_latency_us = 1e9;
     stats->max_dequeue_latency_us = 0.0;
+    stats->enqueue_finish_time_sec = 0.0;
+    stats->dequeue_finish_time_sec = 0.0;
 }
 
 // Percentile calculation function (currently unused but available for future extensions)

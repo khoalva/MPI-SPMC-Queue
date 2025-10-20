@@ -4,6 +4,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
+#include <sys/time.h>
+
+// Timer utilities
+static inline double get_time_us() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000000.0 + tv.tv_usec;
+}
+
+static inline void print_timing(const char* operation, double start_time, int rank) {
+    double elapsed = get_time_us() - start_time;
+    printf("[TIMER][Rank %d] %s: %.2f μs\n", rank, operation, elapsed);
+}
 
 
 int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
@@ -277,90 +291,83 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     
     int rank = mpi_get_rank(&queue->mpi_ctx);
     
-    // Local variables for producer
-    int tail = queue->p->tail;
-    int enq_row = queue->p->enq_row;
-    
-    
     // O(k/64) worst case is O(N/64), almost O(1)
-    // Find safe index from tail in map - FIX: use enq_row instead of 0
-    tail = find_safe_index_from(tail, queue->p->map, 0); // Using row 0 for producer map
-    if (tail == -1) {
+    // Find safe index from tail in map
+    queue->p->tail = find_safe_index_from(queue->p->tail, queue->p->map, 0); // Using row 0 for producer map
+    if (queue->p->tail == -1) {
         fprintf(stderr, "[Rank %d][ENQUEUE ERROR] No safe index found in sync_bitmap\n", rank);
         return -1;
     }
 
     
     // Create new cell with value and generation
-    cell_t new_cell = MAKE_CELL(value, enq_row);
+    cell_t new_cell = MAKE_CELL(value, queue->p->enq_row);
 
     
     // SWAP(ITEMS[tail], cell) - Using MPI_fetch_and_op with UINT64_T
     cell_t old_cell;
-    MPI_Aint offset = tail * sizeof(cell_t);
+    MPI_Aint offset = queue->p->tail * sizeof(cell_t);
     
     MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell, MPI_UINT64_T, 0, offset, 
                              MPI_REPLACE, &queue->q->win_items));
     
     printf("[Rank %d][ENQUEUE] Swapped at tail %d (row %d), old_cell: {data=%d, gen=%d}, new_cell: {data=%d, gen=%d}\n", 
-           rank, tail, enq_row, GET_DATA(old_cell), GET_GEN(old_cell), GET_DATA(new_cell), GET_GEN(new_cell));
+           rank, queue->p->tail, queue->p->enq_row, GET_DATA(old_cell), GET_GEN(old_cell), GET_DATA(new_cell), GET_GEN(new_cell));
     
     // Check if we need to move to next row
-    if (GET_DATA(old_cell) == T && GET_GEN(old_cell) == enq_row) {
+    if (GET_DATA(old_cell) == T && GET_GEN(old_cell) == queue->p->enq_row) {
         
         // Synchronize bitmap from remote BITMAP[enq_row] to local sync_bitmap
         // MPI_GET: sync_bitmap = SYNC(BITMAP[enq_row])
 
-        sync_bitmap_row(queue, enq_row, queue->p->map);
+        sync_bitmap_row(queue, queue->p->enq_row, queue->p->map);
 
         // Heuristic: Based on the index we found need to reset and number of consumers
         int num_consumers = mpi_get_size(&queue->mpi_ctx) - 1;
-        heuristic_bitmap(queue->p->map, tail, num_consumers);
-        
+        heuristic_bitmap(queue->p->map, queue->p->tail, num_consumers);
+
         // MPI_PUT: WRITE(SYNC_BITMAP[enq_row], sync_bitmap)
         int words = queue->q->sync_bitmap->words_per_row;
-        MPI_Aint sync_offset = enq_row * words * sizeof(uint64_t);
+        MPI_Aint sync_offset = queue->p->enq_row * words * sizeof(uint64_t);
 
         MPI_TRY(mpi_put(queue->p->map->data, words * sizeof(uint64_t), MPI_BYTE,
                         0, sync_offset,
                         &queue->q->win_sync_bitmap));
         
         // Move to next row
-        enq_row += 1;
-        tail = 0;
+        queue->p->enq_row += 1;
+        queue->p->tail = 0;
         // printf("[Rank %d][ENQUEUE] Moving to next row: enq_row=%d, tail reset to 0\n", rank, enq_row);
         
         // Find safe index again and retry swap
-        tail = find_safe_index_from(tail, queue->p->map, 0); // Still use row 0 for producer map
-        if (tail == -1) {
+        queue->p->tail = find_safe_index_from(queue->p->tail, queue->p->map, 0); // Still use row 0 for producer map
+        if (queue->p->tail == -1) {
             fprintf(stderr, "No safe index found after row increment\n");
             return -1;
         }
         
         // Create new cell with updated generation
-        new_cell = MAKE_CELL(value, enq_row);
+        new_cell = MAKE_CELL(value, queue->p->enq_row);
         
         // SWAP again with new row
         cell_t old_cell_retry;
-        MPI_Aint offset = tail * sizeof(cell_t);
+        MPI_Aint offset = queue->p->tail * sizeof(cell_t);
 
         MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell_retry, MPI_UINT64_T, 0, offset, 
                              MPI_REPLACE, &queue->q->win_items));
         
         printf("[Rank %d][ENQUEUE] (2nd try) Swapped at tail %d (row %d), old_cell: {data=%d, gen=%d}, new_cell: {data=%d, gen=%d}\n", 
-           rank, tail, enq_row, GET_DATA(old_cell_retry), GET_GEN(old_cell_retry), GET_DATA(new_cell), GET_GEN(new_cell));
+           rank, queue->p->tail, queue->p->enq_row, GET_DATA(old_cell_retry), GET_GEN(old_cell_retry), GET_DATA(new_cell), GET_GEN(new_cell));
         
         // MPI_Accumulate + MPI_REPLACE (atomic write): WRITE(ROW, enq_row)
-        MPI_TRY(mpi_accumulate(&enq_row, 1, MPI_INT, 0, 0,
+        MPI_TRY(mpi_accumulate(&queue->p->enq_row, 1, MPI_INT, 0, 0,
                               MPI_REPLACE, &queue->q->win_row));
     }
     
-    // FIX: Update local producer state - don't increment tail linearly
-    // Instead, find next safe index for next enqueue
-    int next_tail = (tail + 1) % MAX_QUEUE_SIZE;
-    queue->p->tail = next_tail;
-    queue->p->enq_row = enq_row;
-    
+    // Update local producer state
+    // Don't increment tail linearly - let find_safe_index_from handle it dynamically
+    // Only update tail for starting hint in next enqueue, but will be overridden by find_safe_index_from
+    queue->p->tail = (queue->p->tail + 1) % MAX_QUEUE_SIZE;  // Just a hint for next search
     
     return MPI_SUCCESS;
 }
@@ -370,30 +377,33 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     
     int rank = mpi_get_rank(&queue->mpi_ctx);
     int consumer_idx = rank - 1;  // Consumer index (0-based)
-    // printf("[Rank %d][DEQUEUE] Starting dequeue operation (Consumer %d)\n", rank, consumer_idx);
     
-    // MPI_fetch_op + MPI_NO_OP (atomic read): READ(ROW)
+    double dequeue_start = get_time_us();
+    
+    // [TIMER 1] READ(ROW) - atomic read operation
+    double read_row_start = get_time_us();
     int deq_row;
     int zero = 0;
     MPI_TRY(mpi_fetch_and_op(&zero, &deq_row, MPI_INT, 0, 0, 
                              MPI_NO_OP, &queue->q->win_row));
+    print_timing("READ_ROW", read_row_start, rank);
 
     
     int is_new_row = (deq_row != queue->c->last_deq_row);
     
     if (is_new_row && deq_row > 0) {
-        // printf("[Rank %d][DEQUEUE] Detected new row. Synchronizing with SYNC_BITMAP row %d\n", 
-        //        rank, deq_row - 1);
-               
+        // [TIMER 2] SYNC_BITMAP read - potential bottleneck for multiple consumers
+        double sync_bitmap_start = get_time_us();
+        
         // MPI_GET: sync_bitmap = READ(SYNC_BITMAP[deq_row - 1])
         int words = queue->q->sync_bitmap->words_per_row;
         MPI_Aint offset = (deq_row - 1) * words * sizeof(uint64_t);
         
-        // printf("[Rank %d][DEQUEUE] Reading %d words from SYNC_BITMAP offset %ld\n", 
-        //        rank, words, offset);
         MPI_TRY(mpi_get(queue->c->map->data, words * sizeof(uint64_t), MPI_BYTE,
                         0, offset,
                         &queue->q->win_sync_bitmap));
+        
+        print_timing("SYNC_BITMAP_READ", sync_bitmap_start, rank);
         
         queue->c->last_deq_row = deq_row;
         queue->c->last_value = T;
@@ -402,24 +412,22 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
         printf("[Rank %d][DEQUEUE] Updated last_deq_row to %d\n", rank, deq_row);
     } else if (!is_new_row && queue->c->last_value == L) {
         printf("[Rank %d][DEQUEUE] No new row and last value was L - returning empty\n", rank);
-        usleep(100);
+        usleep(100000);
         return -1;
     }
     
-    // Fetch and Add on HEADS[consumer_rank] to get unique head value
-    // MPI_fetch_op + MPI_SUM (Fetch and Add)
+    // [TIMER 3] HEADS contention - major serialization bottleneck
+    double heads_start = get_time_us();
     int head;
     int one = 1;
     MPI_Aint head_offset = deq_row * sizeof(int);
-
     
     MPI_TRY(mpi_fetch_and_op(&one, &head, MPI_INT, 0, head_offset,
                              MPI_SUM, &queue->q->win_heads));
-    // printf("[Rank %d][DEQUEUE] Received head value: %d\n", rank, head);
+    print_timing("HEADS_FETCH_AND_ADD", heads_start, rank);
     
-    // O(d/64), almost O(1) - optimized with previous results
-    // Find the Nth safe index where N = head
-    // printf("[Rank %d][DEQUEUE] Finding %dth safe index in consumer map\n", rank, head);
+    // [TIMER 4] Bitmap search - O(d/64) complexity
+    double bitmap_search_start = get_time_us();
     
     // Reset optimization if we're in a new row
     if (is_new_row) {
@@ -428,6 +436,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     }
     
     int index = find_Nth_safe_index(head, queue->c->map, 0, queue->c->last_index, queue->c->last_N);
+    print_timing("BITMAP_SEARCH", bitmap_search_start, rank);
     if (index == -1) {
         fprintf(stderr, "[Rank %d][DEQUEUE ERROR] No safe index found for head=%d\n", rank, head);
         queue->c->last_value = L;  // Set last_value to L when no safe index found
@@ -440,6 +449,9 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     
     // printf("[Rank %d][DEQUEUE] Found %dth safe index at position %d\n", rank, head, index);
     
+    // [TIMER 5] Atomic SWAP operation on items array
+    double swap_start = get_time_us();
+    
     // Create cell with T marker and current row
     cell_t new_cell = MAKE_CELL(T, deq_row);
     
@@ -447,10 +459,12 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     cell_t old_cell;
     MPI_Aint offset = index * sizeof(cell_t);
     
-    // printf("[Rank %d][DEQUEUE] Reading cell at index %d, offset %ld\n", rank, index, offset);
-    
     MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell, MPI_UINT64_T, 0, offset, 
                              MPI_REPLACE, &queue->q->win_items));
+    print_timing("ATOMIC_SWAP", swap_start, rank);
+    
+    // [TIMER 6] Bitmap marking operation
+    double bitmap_mark_start = get_time_us();
     
     // Mark this index as dequeued in BITMAP
     // MPI_fetch_op + MPI_BOR: WRITE(BITMAP[deq_row][index], 1)
@@ -461,20 +475,21 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     uint64_t bit_mask = (1ULL << bit_offset);
     MPI_Aint bitmap_offset = (deq_row * queue->q->bitmap->words_per_row + word_index) * sizeof(uint64_t);
     
-    // printf("[Rank %d][DEQUEUE] Marking bit in BITMAP[%d][%d]: word=%d, bit=%d, offset=%ld\n", 
-    //        rank, deq_row, index, word_index, bit_offset, bitmap_offset);
     MPI_TRY(mpi_accumulate(&bit_mask, 1, MPI_UINT64_T, 0, bitmap_offset,
                           MPI_BOR, &queue->q->win_bitmap));
+    print_timing("BITMAP_MARK", bitmap_mark_start, rank);
     
     // Check return value
     if (GET_DATA(old_cell) == L || GET_GEN(old_cell) != deq_row) {
         printf("[Rank %d][DEQUEUE] Invalid cell: data=%d (L=%d), gen=%d, head=%d, index=%d\n", 
                rank, GET_DATA(old_cell), L, GET_GEN(old_cell), head, index);
         queue->c->last_value = L;
+        print_timing("DEQUEUE_TOTAL", dequeue_start, rank);
         usleep(100);  // Small sleep to avoid busy looping
         return -1;  // None - empty or wrong generation
     } else {
         printf("[Rank %d][DEQUEUE] Successfully dequeued value: %d at index=%d, head=%d\n", rank, GET_DATA(old_cell), index, head);
+        print_timing("DEQUEUE_TOTAL", dequeue_start, rank);
         return GET_DATA(old_cell);  // Return the dequeued value
     }
 }

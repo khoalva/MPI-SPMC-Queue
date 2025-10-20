@@ -63,6 +63,8 @@ typedef struct {
     double min_dequeue_latency_us;
     double max_dequeue_latency_us;
     long memory_usage_kb;
+    double enqueue_finish_time_sec;  // Wall-clock time when this process finished enqueuing
+    double dequeue_finish_time_sec;  // Wall-clock time when this process finished dequeuing
 } process_stats_t;
 
 // Benchmark context
@@ -113,6 +115,16 @@ void benchmark_record_enqueue(benchmark_ctx_t *ctx, double latency_us, int succe
  * Record dequeue operation timing
  */
 void benchmark_record_dequeue(benchmark_ctx_t *ctx, double latency_us, int success);
+
+/**
+ * Record when producer finished all enqueue operations
+ */
+void benchmark_record_producer_finish(benchmark_ctx_t *ctx);
+
+/**
+ * Record when consumer finished all dequeue operations
+ */
+void benchmark_record_consumer_finish(benchmark_ctx_t *ctx);
 
 /**
  * Stop benchmark and calculate results

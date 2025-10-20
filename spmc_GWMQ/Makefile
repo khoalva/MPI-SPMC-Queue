@@ -96,6 +96,31 @@ check-deps:
 	@test -f $(MPI_LIB_LIB)/libmpi_wrapper.a || (echo "Error: libmpi_wrapper.a not found in $(MPI_LIB_LIB)" && exit 1)
 	@echo "All dependencies found"
 
+# Test targets
+test: all
+	@echo "Running SPMC queue tests..."
+	@$(MAKE) -C tests all
+	@$(MAKE) -C tests run-all
+
+test-basic: all
+	@$(MAKE) -C tests all
+	@$(MAKE) -C tests run-basic
+
+test-stress: all  
+	@$(MAKE) -C tests all
+	@$(MAKE) -C tests run-stress
+
+test-comprehensive: all
+	@$(MAKE) -C tests all
+	@$(MAKE) -C tests run-comprehensive
+
+test-scalability: all
+	@$(MAKE) -C tests all
+	@$(MAKE) -C tests run-scalability
+
+test-clean:
+	@$(MAKE) -C tests clean
+
 # Help target
 help:
 	@echo "Available targets:"
@@ -109,10 +134,20 @@ help:
 	@echo "  check-deps - Check if dependencies are available"
 	@echo "  help       - Show this help message"
 	@echo ""
+	@echo "Test targets:"
+	@echo "  test              - Run complete test suite"
+	@echo "  test-basic        - Run basic functionality tests"
+	@echo "  test-stress       - Run performance stress tests"
+	@echo "  test-comprehensive- Run comprehensive test suite"
+	@echo "  test-scalability  - Run scalability tests (2,4,6,8 processes)"
+	@echo "  test-clean        - Clean test build files"
+	@echo ""
 	@echo "Usage examples:"
 	@echo "  make run-2                                    - Run without specifying hosts"
 	@echo "  make HOSTS=\"node1,node2\" run-4               - Run with specific hosts"
 	@echo "  make HOSTS=\"localhost,node1,node2\" run-8     - Run with custom host list"
+	@echo "  make test                                     - Run full test suite"
+	@echo "  make test-stress                              - Run stress tests only"
 
 # Directory structure:
 # - include/  : Header files (*.h)
