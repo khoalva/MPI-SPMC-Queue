@@ -88,7 +88,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
         bitmap_init(queue->q->sync_bitmap, rows, cols);
         
         // Initialize sync_bitmap with all 1s as per algorithm: [1,1,1,1,...]
-        set_all_bits(queue->q->bitmap, 0);
+        // set_all_bits(queue->q->bitmap, 0);
         
         // Initialize producer map with all 1s
         set_all_bits_full(queue->p->map);
@@ -115,7 +115,10 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
         // queue->q->cols = cols;
         queue->c->size = MAX_QUEUE_SIZE;
         queue->c->last_value = T;
-        queue->c->last_deq_row = -1;
+        queue->c->last_deq_row = 0;
+        // Initialize optimization variables
+        queue->c->last_index = -1;
+        queue->c->last_N = -1;
         
         // Consumer needs bitmap structures for window creation (but no data)
         queue->q->bitmap = malloc(sizeof(bitmap_t));
@@ -278,8 +281,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     
     
     // O(k/64) worst case is O(N/64), almost O(1)
-    // Find safe index from tail in map
-    tail = find_safe_index_from(tail, queue->p->map, 0);
+    // Find safe index from tail in map - FIX: use enq_row instead of 0
+    tail = find_safe_index_from(tail, queue->p->map, 0); // Using row 0 for producer map
     if (tail == -1) {
         fprintf(stderr, "[Rank %d][ENQUEUE ERROR] No safe index found in sync_bitmap\n", rank);
         return -1;
@@ -302,13 +305,15 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     
     // Check if we need to move to next row
     if (GET_DATA(old_cell) == T && GET_GEN(old_cell) == enq_row) {
-        int rank = mpi_get_rank(&queue->mpi_ctx);
-
         
         // Synchronize bitmap from remote BITMAP[enq_row] to local sync_bitmap
         // MPI_GET: sync_bitmap = SYNC(BITMAP[enq_row])
 
         sync_bitmap_row(queue, enq_row, queue->p->map);
+
+        // Heuristic: Based on the index we found need to reset and number of consumers
+        int num_consumers = mpi_get_size(&queue->mpi_ctx) - 1;
+        heuristic_bitmap(queue->p->map, tail, num_consumers);
         
         // MPI_PUT: WRITE(SYNC_BITMAP[enq_row], sync_bitmap)
         int words = queue->q->sync_bitmap->words_per_row;
@@ -324,7 +329,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         // printf("[Rank %d][ENQUEUE] Moving to next row: enq_row=%d, tail reset to 0\n", rank, enq_row);
         
         // Find safe index again and retry swap
-        tail = find_safe_index_from(tail, queue->p->map, enq_row);
+        tail = find_safe_index_from(tail, queue->p->map, 0); // Still use row 0 for producer map
         if (tail == -1) {
             fprintf(stderr, "No safe index found after row increment\n");
             return -1;
@@ -334,22 +339,24 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         new_cell = MAKE_CELL(value, enq_row);
         
         // SWAP again with new row
-        cell_t old_cell;
+        cell_t old_cell_retry;
         MPI_Aint offset = tail * sizeof(cell_t);
 
-        MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell, MPI_UINT64_T, 0, offset, 
+        MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell_retry, MPI_UINT64_T, 0, offset, 
                              MPI_REPLACE, &queue->q->win_items));
         
         printf("[Rank %d][ENQUEUE] (2nd try) Swapped at tail %d (row %d), old_cell: {data=%d, gen=%d}, new_cell: {data=%d, gen=%d}\n", 
-           rank, tail, enq_row, GET_DATA(old_cell), GET_GEN(old_cell), GET_DATA(new_cell), GET_GEN(new_cell));
+           rank, tail, enq_row, GET_DATA(old_cell_retry), GET_GEN(old_cell_retry), GET_DATA(new_cell), GET_GEN(new_cell));
         
         // MPI_Accumulate + MPI_REPLACE (atomic write): WRITE(ROW, enq_row)
         MPI_TRY(mpi_accumulate(&enq_row, 1, MPI_INT, 0, 0,
                               MPI_REPLACE, &queue->q->win_row));
     }
     
-    // Update local producer state
-    queue->p->tail = tail + 1;
+    // FIX: Update local producer state - don't increment tail linearly
+    // Instead, find next safe index for next enqueue
+    int next_tail = (tail + 1) % MAX_QUEUE_SIZE;
+    queue->p->tail = next_tail;
     queue->p->enq_row = enq_row;
     
     
@@ -368,8 +375,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     int zero = 0;
     MPI_TRY(mpi_fetch_and_op(&zero, &deq_row, MPI_INT, 0, 0, 
                              MPI_NO_OP, &queue->q->win_row));
-    // printf("[Rank %d][DEQUEUE] Current global row: %d, last_deq_row: %d\n", 
-    //        rank, deq_row, queue->c->last_deq_row);
+
     
     int is_new_row = (deq_row != queue->c->last_deq_row);
     
@@ -389,34 +395,47 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
         
         queue->c->last_deq_row = deq_row;
         queue->c->last_value = T;
+        queue->c->last_index = -1;
+        queue->c->last_N = -1;
         printf("[Rank %d][DEQUEUE] Updated last_deq_row to %d\n", rank, deq_row);
     } else if (!is_new_row && queue->c->last_value == L) {
         printf("[Rank %d][DEQUEUE] No new row and last value was L - returning empty\n", rank);
+        usleep(100);
         return -1;
     }
     
-    // Fetch and Add on HEADS[deq_row] to get unique head value
+    // Fetch and Add on HEADS[consumer_rank] to get unique head value
     // MPI_fetch_op + MPI_SUM (Fetch and Add)
     int head;
     int one = 1;
-    int consumer_rank = mpi_get_rank(&queue->mpi_ctx) - 1;  // Consumer index (0-based)
-    MPI_Aint head_offset = consumer_rank * sizeof(int);
-    
-    // printf("[Rank %d][DEQUEUE] Fetching and incrementing HEADS[%d] at offset %ld\n", 
-    //        rank, consumer_rank, head_offset);
+    MPI_Aint head_offset = deq_row * sizeof(int);
+
     
     MPI_TRY(mpi_fetch_and_op(&one, &head, MPI_INT, 0, head_offset,
                              MPI_SUM, &queue->q->win_heads));
     // printf("[Rank %d][DEQUEUE] Received head value: %d\n", rank, head);
     
-    // O(d/64), almost O(1)
+    // O(d/64), almost O(1) - optimized with previous results
     // Find the Nth safe index where N = head
     // printf("[Rank %d][DEQUEUE] Finding %dth safe index in consumer map\n", rank, head);
-    int index = find_Nth_safe_index(head, queue->c->map, 0);
+    
+    // Reset optimization if we're in a new row
+    if (is_new_row) {
+        queue->c->last_index = -1;
+        queue->c->last_N = -1;
+    }
+    
+    int index = find_Nth_safe_index(head, queue->c->map, 0, queue->c->last_index, queue->c->last_N);
     if (index == -1) {
         fprintf(stderr, "[Rank %d][DEQUEUE ERROR] No safe index found for head=%d\n", rank, head);
+        queue->c->last_value = L;  // Set last_value to L when no safe index found
         return -1;  // None - no item available
     }
+    
+    // Update optimization state for next call
+    queue->c->last_index = index;
+    queue->c->last_N = head;
+    
     // printf("[Rank %d][DEQUEUE] Found %dth safe index at position %d\n", rank, head, index);
     
     // Create cell with T marker and current row
@@ -450,6 +469,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
         printf("[Rank %d][DEQUEUE] Invalid cell: data=%d (L=%d), gen=%d, head=%d, index=%d\n", 
                rank, GET_DATA(old_cell), L, GET_GEN(old_cell), head, index);
         queue->c->last_value = L;
+        usleep(100);  // Small sleep to avoid busy looping
         return -1;  // None - empty or wrong generation
     } else {
         printf("[Rank %d][DEQUEUE] Successfully dequeued value: %d at index=%d, head=%d\n", rank, GET_DATA(old_cell), index, head);
@@ -611,16 +631,61 @@ int find_safe_index_from(int start, bitmap_t* sync_bitmap, int row) {
 }
 
 /**
- * @brief Find the Nth safe index in sync_bitmap (0-indexed)
+ * @brief Find the Nth safe index in sync_bitmap (0-indexed) with optimization
  * N=0 returns first set bit, N=1 returns second set bit, etc.
- * O(d/64) complexity, almost O(1)
+ * O(d/64) complexity, almost O(1) - optimized with last_index and last_N
+ * @param N Target index to find (0-based)
+ * @param sync_bitmap Bitmap to search in
+ * @param row Row to search in bitmap
+ * @param last_index Previous found index (-1 if first call)
+ * @param last_N Previous N value (-1 if first call)
+ * @return Index of Nth set bit, or -1 if not found
  */
-int find_Nth_safe_index(int N, bitmap_t* sync_bitmap, int row) {
+int find_Nth_safe_index(int N, bitmap_t* sync_bitmap, int row, int last_index, int last_N) {
     if (N < 0) return -1;
 
     int words_per_row = sync_bitmap->words_per_row;
     uint64_t* bitmap_row = &sync_bitmap->data[row * words_per_row];
     
+    // Optimization: If we can use previous result as starting point
+    if (last_index >= 0 && last_N >= 0 && N > last_N) {
+        int remaining_N = N - last_N - 1; // Số bit còn lại cần tìm từ sau last_index
+        int start_word = (last_index + 1) / 64; // Word bắt đầu tìm kiếm
+        int start_bit = (last_index + 1) % 64;  // Bit bắt đầu trong word đó
+        
+        // Tìm kiếm từ vị trí sau last_index
+        for (int i = start_word; i < words_per_row; i++) {
+            uint64_t current_word = bitmap_row[i];
+            
+            // Nếu đang ở word đầu tiên, mask out các bit trước start_bit
+            if (i == start_word && start_bit > 0) {
+                // Tạo mask để loại bỏ các bit từ 0 đến start_bit-1
+                uint64_t mask = ~((1ULL << start_bit) - 1);
+                current_word &= mask;
+            }
+            
+            if (current_word == 0) {
+                continue; // Bỏ qua word toàn số 0
+            }
+
+            // Đếm số bit 1 trong word hiện tại
+            int popcount = __builtin_popcountll(current_word);
+
+            if (remaining_N < popcount) {
+                // Bit cần tìm nằm trong word này!
+                int bit_pos_in_word = find_nth_set_bit_in_word(current_word, remaining_N + 1);
+                return i * 64 + bit_pos_in_word;
+            } else {
+                // Bit cần tìm nằm ở các word sau, giảm remaining_N đi
+                remaining_N -= popcount;
+            }
+        }
+        
+        // Nếu không tìm thấy trong phần tối ưu, fall back về tìm kiếm từ đầu
+    }
+    
+    // Tìm kiếm thông thường từ đầu bitmap (fallback hoặc khi không có optimization)
+    int search_N = N;
     for (int i = 0; i < words_per_row; i++) {
         uint64_t current_word = bitmap_row[i];
         if (current_word == 0) {
@@ -628,18 +693,17 @@ int find_Nth_safe_index(int N, bitmap_t* sync_bitmap, int row) {
         }
 
         // Đếm số bit 1 trong word hiện tại
-        // __builtin_popcountll là hàm nội tại của GCC/Clang, rất nhanh.
         int popcount = __builtin_popcountll(current_word);
 
-        if (N < popcount) {
+        if (search_N < popcount) {
             // Bit cần tìm nằm trong word này! (0-indexed: N < popcount)
             // Tìm chỉ số của bit thứ N trong word này (N+1 vì helper function là 1-indexed)
-            int bit_pos_in_word = find_nth_set_bit_in_word(current_word, N + 1);
+            int bit_pos_in_word = find_nth_set_bit_in_word(current_word, search_N + 1);
             // Tính chỉ số cuối cùng
             return i * 64 + bit_pos_in_word;
         } else {
             // Bit cần tìm nằm ở các word sau, giảm N đi
-            N -= popcount;
+            search_N -= popcount;
         }
     }
 
@@ -768,4 +832,14 @@ void sync_bitmap_row(spmc_queue_t *queue, int row, bitmap_t* local_bitmap) {
     MPI_TRY(mpi_get(local_row, words * sizeof(uint64_t), MPI_BYTE,
                     0, offset, 
                     &queue->q->win_bitmap));
+}
+
+/**
+ * @brief Heuristic to update sync_bitmap based on found index
+ * From found_index, set num_consumers bits to 1 in local_bitmap
+ */
+void heuristic_bitmap(bitmap_t* bitmap, int found_index, int num_consumers) {
+    for (int i = found_index + 1; i < found_index + num_consumers && i < bitmap->cols; i++) {
+        set_bit(bitmap->data, i);
+    }
 }

@@ -7,7 +7,7 @@
 
 #define L -1 // ⊥ (empty cell)
 #define T -2 // ⊤ (dequeued cell)
-#define MAX_QUEUE_SIZE 1024
+#define MAX_QUEUE_SIZE 8096
 #define MAX_ROW 1024
 
 // Use uint64_t for atomic operations with MPI_Compare_and_swap
@@ -38,6 +38,9 @@ typedef struct{
     int last_deq_row;
     int last_value;
     bitmap_t* map;
+    // Optimization for find_Nth_safe_index
+    int last_index;
+    int last_N;
 } consumer_t;
 
 
@@ -88,7 +91,8 @@ void print_queue_bitmaps(spmc_queue_t *queue, int max_rows, int max_cols);
 void print_bitmap(bitmap_t* bitmap, int max_rows, int max_cols, const char* title) ;
 
 
-int find_Nth_safe_index(int N, bitmap_t* sync_bitmap, int row);
+int find_Nth_safe_index(int N, bitmap_t* sync_bitmap, int row, int last_index, int last_N);
 int find_safe_index_from(int start, bitmap_t* sync_bitmap, int row);
 int find_nth_set_bit_in_word(uint64_t word, int n) ;
+void heuristic_bitmap(bitmap_t* bitmap, int found_index, int num_consumers) ;
 #endif
