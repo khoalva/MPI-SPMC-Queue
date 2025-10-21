@@ -185,7 +185,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
 
 void spmc_queue_destroy(spmc_queue_t *queue) {
     if (!queue) return;
-    print_queue_bitmaps(queue, 5, 5);
+    // print_queue_bitmaps(queue, 5, 5);
     int rank = mpi_get_rank(&queue->mpi_ctx);
     printf("[Rank %d] Starting queue destruction\n", rank);
     

@@ -50,6 +50,11 @@ $(BIN_DIR)/test_bitmap_functions: $(TEST_DIR)/test_bitmap_functions.c $(LIB_OBJE
 	@echo "Building bitmap functions test $@..."
 	$(CC) $(CFLAGS) $(INCLUDES) $< $(LIB_OBJECTS) $(LIBS) $(LDFLAGS) -o $@
 
+# Build sync_bitmap_row test (with MPI support)
+$(BIN_DIR)/test_sync_bitmap_row: $(TEST_DIR)/test_sync_bitmap_row.c $(LIB_OBJECTS)
+	@echo "Building sync_bitmap_row test $@..."
+	$(CC) $(CFLAGS) $(INCLUDES) $< $(LIB_OBJECTS) $(LIBS) $(LDFLAGS) -o $@
+
 # Clean build files
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)
@@ -92,6 +97,10 @@ run-overtaking: $(BIN_DIR)/test_spmc_overtaking
 	@echo "Running consumer overtaking test with 4 processes..."
 	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun -np 4 $(BIN_DIR)/test_spmc_overtaking
 
+run-sync-bitmap: $(BIN_DIR)/test_sync_bitmap_row
+	@echo "Running sync_bitmap_row data race test with 4 processes..."
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun -np 4 $(BIN_DIR)/test_sync_bitmap_row
+
 # Run all tests sequentially
 run-all: all
 	@echo "Running complete SPMC queue test suite..."
@@ -116,6 +125,15 @@ run-all: all
 	@echo ""
 	@echo "=== Test 7: Comprehensive Suite ==="
 	@$(MAKE) run-comprehensive
+	@echo ""
+	@echo "=== Test 8: Bitmap Functions ==="
+	@$(MAKE) run-bitmap
+	@echo ""
+	@echo "=== Test 9: Consumer Overtaking ==="
+	@$(MAKE) run-overtaking
+	@echo ""
+	@echo "=== Test 10: Sync Bitmap Row Data Race ==="
+	@$(MAKE) run-sync-bitmap
 	@echo ""
 	@echo "=== All Tests Completed ==="
 
