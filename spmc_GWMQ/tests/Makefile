@@ -55,6 +55,11 @@ $(BIN_DIR)/test_sync_bitmap_row: $(TEST_DIR)/test_sync_bitmap_row.c $(LIB_OBJECT
 	@echo "Building sync_bitmap_row test $@..."
 	$(CC) $(CFLAGS) $(INCLUDES) $< $(LIB_OBJECTS) $(LIBS) $(LDFLAGS) -o $@
 
+# Build consumer_first test (with MPI support)
+$(BIN_DIR)/test_consumer_first: $(TEST_DIR)/test_consumer_first.c $(LIB_OBJECTS)
+	@echo "Building consumer_first test $@..."
+	$(CC) $(CFLAGS) $(INCLUDES) $< $(LIB_OBJECTS) $(LIBS) $(LDFLAGS) -o $@
+
 # Clean build files
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)
@@ -101,6 +106,14 @@ run-sync-bitmap: $(BIN_DIR)/test_sync_bitmap_row
 	@echo "Running sync_bitmap_row data race test with 4 processes..."
 	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun -np 4 $(BIN_DIR)/test_sync_bitmap_row
 
+run-consumer-first: $(BIN_DIR)/test_consumer_first
+	@echo "Running consumer-first scenario test with 2 processes..."
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun -np 2 $(BIN_DIR)/test_consumer_first
+
+run-consumer-first-multi: $(BIN_DIR)/test_consumer_first
+	@echo "Running consumer-first scenario test with multiple consumers (4 processes)..."
+	LD_LIBRARY_PATH=$(MPI_LIB_DIR)/lib:$$LD_LIBRARY_PATH mpirun -np 4 $(BIN_DIR)/test_consumer_first
+
 # Run all tests sequentially
 run-all: all
 	@echo "Running complete SPMC queue test suite..."
@@ -134,6 +147,9 @@ run-all: all
 	@echo ""
 	@echo "=== Test 10: Sync Bitmap Row Data Race ==="
 	@$(MAKE) run-sync-bitmap
+	@echo ""
+	@echo "=== Test 11: Consumer Runs Before Producer ==="
+	@$(MAKE) run-consumer-first
 	@echo ""
 	@echo "=== All Tests Completed ==="
 
@@ -182,6 +198,8 @@ help:
 	@echo "  run-comprehensive - Test comprehensive suite (4 processes)"
 	@echo "  run-bitmap        - Test bitmap functions unit tests (no MPI)"
 	@echo "  run-overtaking    - Test consumer overtaking scenarios (4 processes)"
+	@echo "  run-consumer-first       - Test consumer starts before producer (2 processes)"
+	@echo "  run-consumer-first-multi - Test multiple consumers before producer (4 processes)"
 	@echo ""
 	@echo "Test suites:"
 	@echo "  run-all           - Run all tests sequentially"
@@ -204,4 +222,5 @@ list-tests:
 	@echo "7. test_spmc_comprehensive  - Comprehensive test suite"
 	@echo "8. test_bitmap_functions    - Bitmap functions unit tests"
 	@echo "9. test_spmc_overtaking     - Consumer overtaking producer scenarios"
-	@echo "8. test_bitmap_functions    - Bitmap functions unit tests"
+	@echo "10. test_sync_bitmap_row    - Sync bitmap row data race tests"
+	@echo "11. test_consumer_first     - Consumer runs before producer scenarios"

@@ -293,7 +293,10 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     
     // O(k/64) worst case is O(N/64), almost O(1)
     // Find safe index from tail in map
+    int old_tail = queue->p->tail;
     queue->p->tail = find_safe_index_from(queue->p->tail, queue->p->map, 0); // Using row 0 for producer map
+    printf("[Rank %d][ENQUEUE] find_safe_index_from(%d) returned %d\n", rank, old_tail, queue->p->tail);
+    fflush(stdout);
     if (queue->p->tail == -1) {
         fprintf(stderr, "[Rank %d][ENQUEUE ERROR] No safe index found in sync_bitmap\n", rank);
         return -1;
@@ -321,7 +324,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         // MPI_GET: sync_bitmap = SYNC(BITMAP[enq_row])
 
         sync_bitmap_row(queue, queue->p->enq_row, queue->p->map);
-
+        print_bitmap(queue->p->map, 1, 64, "Producer local sync_bitmap after GET");
         // Heuristic: Based on the index we found need to reset and number of consumers
         int num_consumers = mpi_get_size(&queue->mpi_ctx) - 1;
         heuristic_bitmap(queue->p->map, queue->p->tail, num_consumers);
@@ -364,7 +367,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
                               MPI_REPLACE, &queue->q->win_row));
     }
     
-    // Update local producer state
+    // Update local producer state (chạy sau cả normal enqueue VÀ row transition)
     // Don't increment tail linearly - let find_safe_index_from handle it dynamically
     // Only update tail for starting hint in next enqueue, but will be overridden by find_safe_index_from
     queue->p->tail = (queue->p->tail + 1) % MAX_QUEUE_SIZE;  // Just a hint for next search
@@ -378,22 +381,31 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     int rank = mpi_get_rank(&queue->mpi_ctx);
     int consumer_idx = rank - 1;  // Consumer index (0-based)
     
-    double dequeue_start = get_time_us();
+    // double dequeue_start = get_time_us();
     
     // [TIMER 1] READ(ROW) - atomic read operation
-    double read_row_start = get_time_us();
+    // double read_row_start = get_time_us();
+    printf("[Rank %d][DEQUEUE] Starting dequeue operation...\n", rank);
+    fflush(stdout);
+    
     int deq_row;
     int zero = 0;
+    printf("[Rank %d][DEQUEUE] About to fetch ROW...\n", rank);
+    fflush(stdout);
     MPI_TRY(mpi_fetch_and_op(&zero, &deq_row, MPI_INT, 0, 0, 
                              MPI_NO_OP, &queue->q->win_row));
-    print_timing("READ_ROW", read_row_start, rank);
+    printf("[Rank %d][DEQUEUE] Fetched ROW = %d\n", rank, deq_row);
+    fflush(stdout);
+    // print_timing("READ_ROW", read_row_start, rank);
 
     
     int is_new_row = (deq_row != queue->c->last_deq_row);
+    printf("[Rank %d][DEQUEUE] is_new_row=%d, last_deq_row=%d\n", rank, is_new_row, queue->c->last_deq_row);
+    fflush(stdout);
     
     if (is_new_row && deq_row > 0) {
         // [TIMER 2] SYNC_BITMAP read - potential bottleneck for multiple consumers
-        double sync_bitmap_start = get_time_us();
+        // double sync_bitmap_start = get_time_us();
         
         // MPI_GET: sync_bitmap = READ(SYNC_BITMAP[deq_row - 1])
         int words = queue->q->sync_bitmap->words_per_row;
@@ -403,7 +415,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
                         0, offset,
                         &queue->q->win_sync_bitmap));
         
-        print_timing("SYNC_BITMAP_READ", sync_bitmap_start, rank);
+        // print_timing("SYNC_BITMAP_READ", sync_bitmap_start, rank);
         
         queue->c->last_deq_row = deq_row;
         queue->c->last_value = T;
@@ -416,18 +428,25 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
         return -1;
     }
     
+    printf("[Rank %d][DEQUEUE] Passed early-exit checks, last_value=%d\n", rank, queue->c->last_value);
+    fflush(stdout);
+    
     // [TIMER 3] HEADS contention - major serialization bottleneck
-    double heads_start = get_time_us();
+    // double heads_start = get_time_us();
     int head;
     int one = 1;
-    MPI_Aint head_offset = deq_row * sizeof(int);
+    MPI_Aint head_offset = deq_row;  // No need to multiply by sizeof(int), MPI window displacement unit handles it
     
+    printf("[Rank %d][DEQUEUE] About to fetch_and_add HEADS at offset %ld...\n", rank, (long)head_offset);
+    fflush(stdout);
     MPI_TRY(mpi_fetch_and_op(&one, &head, MPI_INT, 0, head_offset,
                              MPI_SUM, &queue->q->win_heads));
-    print_timing("HEADS_FETCH_AND_ADD", heads_start, rank);
+    printf("[Rank %d][DEQUEUE] Fetched HEAD = %d\n", rank, head);
+    fflush(stdout);
+    // print_timing("HEADS_FETCH_AND_ADD", heads_start, rank);
     
     // [TIMER 4] Bitmap search - O(d/64) complexity
-    double bitmap_search_start = get_time_us();
+    // double bitmap_search_start = get_time_us();
     
     // Reset optimization if we're in a new row
     if (is_new_row) {
@@ -436,7 +455,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     }
     
     int index = find_Nth_safe_index(head, queue->c->map, 0, queue->c->last_index, queue->c->last_N);
-    print_timing("BITMAP_SEARCH", bitmap_search_start, rank);
+    // print_timing("BITMAP_SEARCH", bitmap_search_start, rank);
     if (index == -1) {
         fprintf(stderr, "[Rank %d][DEQUEUE ERROR] No safe index found for head=%d\n", rank, head);
         queue->c->last_value = L;  // Set last_value to L when no safe index found
@@ -450,7 +469,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     // printf("[Rank %d][DEQUEUE] Found %dth safe index at position %d\n", rank, head, index);
     
     // [TIMER 5] Atomic SWAP operation on items array
-    double swap_start = get_time_us();
+    // double swap_start = get_time_us();
     
     // Create cell with T marker and current row
     cell_t new_cell = MAKE_CELL(T, deq_row);
@@ -461,10 +480,10 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     
     MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell, MPI_UINT64_T, 0, offset, 
                              MPI_REPLACE, &queue->q->win_items));
-    print_timing("ATOMIC_SWAP", swap_start, rank);
+    // print_timing("ATOMIC_SWAP", swap_start, rank);
     
     // [TIMER 6] Bitmap marking operation
-    double bitmap_mark_start = get_time_us();
+    // double bitmap_mark_start = get_time_us();
     
     // Mark this index as dequeued in BITMAP
     // MPI_fetch_op + MPI_BOR: WRITE(BITMAP[deq_row][index], 1)
@@ -477,19 +496,19 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     
     MPI_TRY(mpi_accumulate(&bit_mask, 1, MPI_UINT64_T, 0, bitmap_offset,
                           MPI_BOR, &queue->q->win_bitmap));
-    print_timing("BITMAP_MARK", bitmap_mark_start, rank);
+    // print_timing("BITMAP_MARK", bitmap_mark_start, rank);
     
     // Check return value
     if (GET_DATA(old_cell) == L || GET_GEN(old_cell) != deq_row) {
         printf("[Rank %d][DEQUEUE] Invalid cell: data=%d (L=%d), gen=%d, head=%d, index=%d\n", 
                rank, GET_DATA(old_cell), L, GET_GEN(old_cell), head, index);
         queue->c->last_value = L;
-        print_timing("DEQUEUE_TOTAL", dequeue_start, rank);
+        // print_timing("DEQUEUE_TOTAL", dequeue_start, rank);
         usleep(100);  // Small sleep to avoid busy looping
         return -1;  // None - empty or wrong generation
     } else {
         printf("[Rank %d][DEQUEUE] Successfully dequeued value: %d at index=%d, head=%d\n", rank, GET_DATA(old_cell), index, head);
-        print_timing("DEQUEUE_TOTAL", dequeue_start, rank);
+        // print_timing("DEQUEUE_TOTAL", dequeue_start, rank);
         return GET_DATA(old_cell);  // Return the dequeued value
     }
 }

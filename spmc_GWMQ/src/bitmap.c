@@ -93,14 +93,16 @@ void set_all_bits_full(bitmap_t* bitmap) {
 
 /**
  * @brief Find safe index from starting position using sync_bitmap
- * Returns first index where bit is 1 (safe to use)
+ * Returns first index >= start where bit is 1 (safe to use)
  * O(k/64) complexity, almost O(1)
+ * NOTE: Does NOT wrap around - only searches from start to end
  */
 int find_safe_index_from(int start, bitmap_t* sync_bitmap, int row) {
     int cols = sync_bitmap->cols;
     uint64_t* bitmap_row = &sync_bitmap->data[row * sync_bitmap->words_per_row];
     
     // In GWMQ: bit=1 means safe, bit=0 means unsafe (being used by consumer)
+    // Tìm kiếm từ start đến cuối, KHÔNG wrap around
     for (int i = start; i < cols; i++) {
         if (check_bit(bitmap_row, i)) {  // Check for bit=1 (safe)
             return i;
@@ -114,7 +116,7 @@ int find_safe_index_from(int start, bitmap_t* sync_bitmap, int row) {
         }
     }
     
-    // TODO: Handle case when no safe index found
+    // Không tìm thấy index nào >= start có bit=1
     return -1;
 }
 
@@ -324,15 +326,56 @@ void sync_bitmap_row(struct spmc_queue *queue, int row, bitmap_t* local_bitmap) 
 
 /**
  * @brief Heuristic to update sync_bitmap based on found index
- * From found_index, set num_consumers bits to 1 in local_bitmap
+ * After syncing from BITMAP (which may be all 0s), set up the local map:
+ * - Clear bits that consumers are predicted to use (found_index+1 to found_index+num_consumers)
+ * - Set all bits AFTER the cleared range to 1 (safe/available for producer)
  */
 void heuristic_bitmap(bitmap_t* bitmap, int found_index, int num_consumers) {
     // Apply heuristic on row 0 (producer always uses row 0)
     uint64_t* bitmap_row = &bitmap->data[0 * bitmap->words_per_row];
     
+    // Step 1: Clear bits that consumers are predicted to use
     // Heuristic: Set next num_consumers positions as UNSAFE (bit=0)
-    // This predicts that consumers will use these positions
-    for (int i = found_index + 1; i < found_index + num_consumers + 1 && i < bitmap->cols; i++) {
-        clear_bit(bitmap_row, i);  // Set to 0 (unsafe)
+    int clear_end = found_index + num_consumers + 1;
+    for (int i = found_index + 1; i < clear_end && i < bitmap->cols; i++) {
+        clear_bit(bitmap_row, i);  // Set to 0 (unsafe/predicted to be used)
+    }
+    
+    // Step 2: Set all bits AFTER the cleared range to 1 (available for producer)
+    // OPTIMIZED: Set entire words at once instead of individual bits
+    // IMPORTANT: BITMAP from shared memory may be all 0s (from calloc)
+    // We need to mark positions after the predicted consumer range as available
+    
+    if (clear_end >= bitmap->cols) {
+        return; // Nothing to set
+    }
+    
+    int start_word = clear_end / 64;
+    int start_bit = clear_end % 64;
+    int end_word = (bitmap->cols - 1) / 64;
+    
+    // Handle first partial word (if start_bit != 0)
+    if (start_bit != 0) {
+        // Create mask for bits from start_bit to end of word
+        uint64_t mask = ~((1ULL << start_bit) - 1);
+        bitmap_row[start_word] |= mask;
+        start_word++; // Move to next word
+    }
+    
+    // Set all complete words to 0xFFFFFFFFFFFFFFFF
+    for (int word = start_word; word < end_word; word++) {
+        bitmap_row[word] = 0xFFFFFFFFFFFFFFFFULL;
+    }
+    
+    // Handle last partial word (if needed)
+    if (start_word <= end_word) {
+        int last_bit = (bitmap->cols - 1) % 64;
+        if (start_word == end_word && start_bit != 0) {
+            // Already handled in first partial word
+        } else {
+            // Set bits from 0 to last_bit in the last word
+            uint64_t mask = (1ULL << (last_bit + 1)) - 1;
+            bitmap_row[end_word] |= mask;
+        }
     }
 }
