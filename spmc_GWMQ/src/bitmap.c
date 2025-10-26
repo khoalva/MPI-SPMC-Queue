@@ -318,10 +318,11 @@ void sync_bitmap_row(struct spmc_queue *queue, int row, bitmap_t* local_bitmap) 
     MPI_Aint offset = row * words * sizeof(uint64_t);
     uint64_t* local_row = &local_bitmap->data[0];  // Store in first row of local bitmap
     
-    // MPI_GET to read bitmap row
-    MPI_TRY(mpi_get(local_row, words * sizeof(uint64_t), MPI_BYTE,
-                    0, offset, 
-                    &queue->q->win_bitmap));
+    MPI_TRY(mpi_get_accumulate(local_row, words * sizeof(uint64_t), MPI_BYTE,
+                                 local_row, words * sizeof(uint64_t), MPI_BYTE,
+                                 0, offset, words * sizeof(uint64_t), MPI_BYTE,
+                                 MPI_NO_OP, &queue->q->win_bitmap));
+
 }
 
 /**
