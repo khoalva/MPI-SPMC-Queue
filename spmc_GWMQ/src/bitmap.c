@@ -337,10 +337,19 @@ void heuristic_bitmap(bitmap_t* bitmap, int found_index, int num_consumers) {
     
     // Step 1: Clear bits that consumers are predicted to use
     // Heuristic: Set next num_consumers positions as UNSAFE (bit=0)
-    int clear_end = found_index + num_consumers + 1;
-    for (int i = found_index + 1; i < clear_end && i < bitmap->cols; i++) {
-        clear_bit(bitmap_row, i);  // Set to 0 (unsafe/predicted to be used)
+    int cleared_count = 0;
+    int i = found_index + 1;
+
+    while (cleared_count < num_consumers && i < bitmap->cols) {
+        if (check_bit(bitmap_row, i)) {  // Chỉ clear nếu bit = 1
+            clear_bit(bitmap_row, i);
+            cleared_count++;
+        }
+        i++;
     }
+
+    // Step 2: Set all bits AFTER the cleared range to 1 (available for producer)
+    int clear_end = i;
     
     // Step 2: Set all bits AFTER the cleared range to 1 (available for producer)
     // OPTIMIZED: Set entire words at once instead of individual bits
