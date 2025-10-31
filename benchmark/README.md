@@ -12,11 +12,13 @@ A comprehensive performance benchmarking library for Single Producer Multiple Co
 - **Scalability**: Performance across different process counts
 
 ### 📊 **Benchmark Types**
-- **Quick Test**: Fast validation with 1,000 items
-- **Throughput Test**: High-volume processing with 10,000 items  
-- **Latency Test**: Detailed timing analysis with microsecond precision
-- **Scalability Test**: Performance scaling from 2-8 processes
-- **Stress Test**: Extended duration testing under high load
+- **Quick Test**: Fast validation with 1,000 items (1 producer, 2 consumers, 30s timeout)
+- **Throughput Test**: High-volume processing with 10,000 items (1 producer, 4 consumers, 60s timeout)
+- **Latency Test**: Detailed timing analysis with microsecond precision (1 producer, 2 consumers, 45s timeout)
+- **Scalability Test**: Performance scaling from 2-8 processes (1 producer, 8 consumers, 120s timeout)
+- **Stress Test**: Extended duration testing under high load (1 producer, 6 consumers, 300s duration)
+
+**Note**: When running benchmarks, ensure your `-np` value matches the total of producers + consumers for each test type.
 
 ### 📈 **Advanced Analytics**
 - Statistical analysis of latency distributions
@@ -64,7 +66,18 @@ mpirun -np 3 ./examples/spmc_benchmark latency
 
 # Scalability test with 6 processes
 mpirun -np 6 ./examples/spmc_benchmark scalability
+
+# Stress test with 7 processes (1 producer + 6 consumers)
+# Note: Total processes = num_producers + num_consumers
+# Stress test default config: 1 producer, 6 consumers, 300s duration
+mpirun -np 7 ./examples/spmc_benchmark stress
 ```
+
+**Important Note on Process Count:**
+- The configuration defines `num_producers` and `num_consumers` (e.g., stress test: 1 + 6)
+- You must run with total processes = num_producers + num_consumers
+- Example: For stress test (1 producer + 6 consumers), use `-np 7`
+- The first process becomes the producer, remaining processes become consumers
 
 ## API Usage
 

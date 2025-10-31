@@ -6,8 +6,8 @@
 // Constants for special values
 #define L -1 // ⊥ (empty cell)
 #define T -2 // ⊤ (dequeued cell)
-#define MAX_ROWS 10 // Maximum rows in ITEMS
-#define MAX_COLS 12000 // Maximum columns in ITEMS
+#define MAX_ROWS 5 // Maximum rows in ITEMS
+#define MAX_COLS 110000 // Maximum columns in ITEMS
 #define MAX_VALUE 1024 // Maximum value to enqueue
 
 // Queue structure using MPI wrapper library

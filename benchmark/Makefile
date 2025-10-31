@@ -54,8 +54,8 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c $(HEADERS)
 examples: spmc_benchmark
 
 spmc_benchmark: $(EXAMPLEDIR)/spmc_benchmark.c $(STATIC_LIB)
-	$(CC) $(CFLAGS) -I$(INCDIR) -I../spmc_2017/src -I../mpi_lib/include \
-		$(EXAMPLEDIR)/spmc_benchmark.c ../spmc_2017/build/spmc_queue.o \
+	$(CC) $(CFLAGS) -I$(INCDIR) -I../spmc_dFFQ/src -I../mpi_lib/include \
+		$(EXAMPLEDIR)/spmc_benchmark.c ../spmc_dFFQ/build/spmc_queue.o \
 		$(LIBDIR)/$(STATIC_LIB) ../mpi_lib/lib/libmpi_wrapper.a \
 		-lm -o $(EXAMPLEDIR)/spmc_benchmark
 

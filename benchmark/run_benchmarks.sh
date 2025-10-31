@@ -52,11 +52,11 @@ print_usage() {
     echo "Usage: $0 [OPTIONS] [TEST_TYPE]"
     echo ""
     echo "Test Types:"
-    echo "  quick       - Quick validation test (default)"
-    echo "  throughput  - Throughput benchmark"
-    echo "  latency     - Latency analysis"
-    echo "  scalability - Scalability testing"
-    echo "  stress      - Stress testing"
+    echo "  quick       - Quick validation test (default, recommended: -p 3)"
+    echo "  throughput  - Throughput benchmark (recommended: -p 5)"
+    echo "  latency     - Latency analysis (recommended: -p 3)"
+    echo "  scalability - Scalability testing (recommended: -p 9)"
+    echo "  stress      - Stress testing (recommended: -p 7 = 1 producer + 6 consumers)"
     echo "  suite       - Run complete benchmark suite"
     echo "  all         - Same as suite"
     echo ""
@@ -77,11 +77,19 @@ print_usage() {
     echo "Examples:"
     echo "  $0 quick"
     echo "  $0 throughput -p 4"
+    echo "  $0 stress -p 7  # Important: Use 7 processes for stress test!"
     echo "  $0 throughput -p 4 -s ../spmc_2004"
     echo "  $0 throughput -p 8 -H MPI-node1,MPI-node2,MPI-node3,MPI-node4"
     echo "  $0 suite -p 6 --export-csv -s ../spmc_impl"
     echo "  $0 scalability -p 8 -H node1,node2 -o ./results"
     echo "  $0 --check-libs"
+    echo ""
+    echo "Note: Process count should match test configuration:"
+    echo "  - Quick: 3 processes (1 producer + 2 consumers)"
+    echo "  - Throughput: 5 processes (1 producer + 4 consumers)"
+    echo "  - Latency: 3 processes (1 producer + 2 consumers)"
+    echo "  - Scalability: 9 processes (1 producer + 8 consumers)"
+    echo "  - Stress: 7 processes (1 producer + 6 consumers)"
     echo ""
 }
 
@@ -549,7 +557,30 @@ run_benchmark() {
     local timestamp=$(date +"%Y%m%d_%H%M%S")
     local log_file="${LOG_DIR}/benchmark_${test_type}_${spmc_name}_${num_procs}procs_${timestamp}.log"
 
-    log_info "Running $test_type benchmark with $num_procs processes for $spmc_name..."
+    # Determine timeout based on test type
+    local timeout_seconds=60
+    case "$test_type" in
+        quick)
+            timeout_seconds=60
+            ;;
+        throughput)
+            timeout_seconds=120
+            ;;
+        latency)
+            timeout_seconds=90
+            ;;
+        scalability)
+            timeout_seconds=180
+            ;;
+        stress)
+            timeout_seconds=360  # 6 minutes for stress test (config says 300s + buffer)
+            ;;
+        *)
+            timeout_seconds=60
+            ;;
+    esac
+
+    log_info "Running $test_type benchmark with $num_procs processes for $spmc_name (timeout: ${timeout_seconds}s)..."
 
     # Build and link SPMC object with benchmark object
     local spmc_executable=$(build_and_link_spmc_benchmark "$spmc_path")
@@ -672,15 +703,15 @@ run_benchmark() {
     
     if [[ "$VERBOSE" == "true" ]]; then
         if echo "$mpi_version" | grep -qi "open.mpi\|openmpi"; then
-            OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 timeout 60 $mpi_cmd 2>&1 | tee "$log_file"
+            OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 timeout ${timeout_seconds} $mpi_cmd 2>&1 | tee "$log_file"
         else
-            timeout 60 $mpi_cmd 2>&1 | tee "$log_file"
+            timeout ${timeout_seconds} $mpi_cmd 2>&1 | tee "$log_file"
         fi
     else
         if echo "$mpi_version" | grep -qi "open.mpi\|openmpi"; then
-            timeout 60 bash -c "OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 $mpi_cmd > '$log_file' 2>&1"
+            timeout ${timeout_seconds} bash -c "OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 $mpi_cmd > '$log_file' 2>&1"
         else
-            timeout 60 bash -c "$mpi_cmd > '$log_file' 2>&1"
+            timeout ${timeout_seconds} bash -c "$mpi_cmd > '$log_file' 2>&1"
         fi
     fi
     
@@ -690,7 +721,7 @@ run_benchmark() {
     local exit_code=$?
     
     if [[ $exit_code -eq 124 ]]; then
-        log_error "$test_type benchmark timed out after 60 seconds"
+        log_error "$test_type benchmark timed out after ${timeout_seconds} seconds"
         log_error "Check log file for details: $log_file"
         return 124
     elif [[ $exit_code -eq 0 ]]; then
