@@ -194,6 +194,6 @@ void benchmark_cleanup(benchmark_ctx_t *ctx);
 #define BENCHMARK_THROUGHPUT_TEST   {10000, 1, 4, 1000, 5000, 500, 60, 0, 0, "Throughput Test"}
 #define BENCHMARK_LATENCY_TEST      {5000, 1, 2, 5000, 10000, 200, 45, 1, 0, "Latency Test"}
 #define BENCHMARK_SCALABILITY_TEST  {20000, 1, 8, 2000, 8000, 1000, 120, 0, 1, "Scalability Test"}
-#define BENCHMARK_STRESS_TEST       {100000, 1, 6, 500, 2000, 2000, 300, 1, 1, "Stress Test"}
+#define BENCHMARK_STRESS_TEST       {100000, 1, 6, 500, 2000, 2000, 120, 1, 1, "Stress Test"}
 
 #endif // BENCHMARK_H
