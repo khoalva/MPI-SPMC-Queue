@@ -1,9 +1,3 @@
-// Complete fix for SPMC queue race condition
-// The key issues were:
-// 1. Improper initialization of shared row state
-// 2. Missing memory barriers and synchronization
-// 3. Potential offset calculation issues in MPI windows
-
 #include "spmc_queue.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -117,14 +111,14 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         return -1;
     }
 
-    printf("[ENQ_OFFSET_DEBUG] Rank %d: Element offset = %zu, Byte offset = %zu for (row:%d, col:%d)\n",
-           mpi_get_rank(&queue->mpi_ctx), element_offset, byte_offset, queue->eng_row, queue->tail);
+    // printf("[ENQ_OFFSET_DEBUG] Rank %d: Element offset = %zu, Byte offset = %zu for (row:%d, col:%d)\n",
+    //        mpi_get_rank(&queue->mpi_ctx), element_offset, byte_offset, queue->eng_row, queue->tail);
 
     // AtomicSwap: MPI_Fetch_and_op with MPI_REPLACE
     MPI_TRY(mpi_fetch_and_op(&value, &val, MPI_INT, 0, byte_offset, MPI_REPLACE, &queue->win_items));
     
-    printf("[ENQ_SWAP_RESULT] Rank %d: Swap returned original value: %d\n",
-           mpi_get_rank(&queue->mpi_ctx), val);
+    // printf("[ENQ_SWAP_RESULT] Rank %d: Swap returned original value: %d\n",
+    //        mpi_get_rank(&queue->mpi_ctx), val);
     
     // Check if we hit the end-of-row marker (T)
     if (val == T) {
@@ -196,8 +190,8 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
         return -1;
     }
 
-    printf("[DEQ_OFFSET_DEBUG] Rank %d: Head element offset = %zu, byte offset = %zu for deq_row %d\n",
-           mpi_get_rank(&queue->mpi_ctx), head_element_offset, head_byte_offset, deq_row);
+    // printf("[DEQ_OFFSET_DEBUG] Rank %d: Head element offset = %zu, byte offset = %zu for deq_row %d\n",
+    //        mpi_get_rank(&queue->mpi_ctx), head_element_offset, head_byte_offset, deq_row);
 
     MPI_TRY(mpi_fetch_and_op(&one, &head, MPI_INT, 0, head_byte_offset, MPI_SUM, &queue->win_head));
 
@@ -212,8 +206,8 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
         return -1;
     }
 
-    printf("[DEQ_OFFSET_DEBUG] Rank %d: Items element offset = %zu, byte offset = %zu for (row:%d, col:%d)\n",
-           mpi_get_rank(&queue->mpi_ctx), items_element_offset, items_byte_offset, deq_row, head);
+    // printf("[DEQ_OFFSET_DEBUG] Rank %d: Items element offset = %zu, byte offset = %zu for (row:%d, col:%d)\n",
+    //        mpi_get_rank(&queue->mpi_ctx), items_element_offset, items_byte_offset, deq_row, head);
 
     MPI_TRY(mpi_fetch_and_op(&t_value, &val, MPI_INT, 0, items_byte_offset, MPI_REPLACE, &queue->win_items));
     // MPI_TRY(mpi_win_flush(0, &queue->win_items));
