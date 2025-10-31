@@ -143,28 +143,11 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
 }
 
 /**
- * @brief Helper function to check if an element is available for dequeue
+ * @brief Dequeues an item using FFQ logic.
+ * @return MPI_SUCCESS on success, -1 on failure.
  */
-static int spmc_element_available(spmc_queue_t *queue) {
-    int rank = queue->head;
-    int pos = rank % queue->size;
-    MPI_Aint disp = pos * sizeof(spmc_cell_t);
+int spmc_queue_dequeue(spmc_queue_t *queue) {
     
-    // ReadCompositeSnap: MPI_Get_accumulate with MPI_NO_OP
-    spmc_cell_t c;
-    spmc_cell_t no_op_val = {0};
-    MPI_TRY(mpi_get_accumulate(&no_op_val, 3, MPI_INT,
-                                &c, 3, MPI_INT,
-                                0, disp, 3, MPI_INT,
-                                MPI_NO_OP, &queue->win_cells));
-    
-    return (c.rank == rank) || (c.gap >= rank);
-}
-
-/**
- * @brief Internal dequeue with backoff and retry logic
- */
-static int spmc_queue_dequeue_backoff(spmc_queue_t *queue) {
     int rank;
     int one = 1;
     bool success = false;
@@ -268,16 +251,6 @@ static int spmc_queue_dequeue_backoff(spmc_queue_t *queue) {
     
     // Line 26: return data
     return data;
-}
-
-/**
- * @brief Dequeues an item using FFQ logic.
- * @return MPI_SUCCESS on success, -1 on failure.
- */
-int spmc_queue_dequeue(spmc_queue_t *queue) {
-    if (!spmc_element_available(queue)) return -1;
-    
-    return spmc_queue_dequeue_backoff(queue);
 }
 
 /**
