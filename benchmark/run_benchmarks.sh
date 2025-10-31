@@ -573,7 +573,7 @@ run_benchmark() {
             timeout_seconds=180
             ;;
         stress)
-            timeout_seconds=360  # 6 minutes for stress test (config says 300s + buffer)
+            timeout_seconds=150  # 2.5 minutes for stress test (config says 300s + buffer)
             ;;
         *)
             timeout_seconds=60
