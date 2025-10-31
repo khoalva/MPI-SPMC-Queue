@@ -8,8 +8,8 @@
 
 #define L -1 // ⊥ (empty cell)
 #define T -2 // ⊤ (dequeued cell)
-#define MAX_QUEUE_SIZE 12000
-#define MAX_ROW 1024
+#define MAX_QUEUE_SIZE 110000
+#define MAX_ROW 10
 
 // Use uint64_t for atomic operations with MPI_Compare_and_swap
 // Pack: lower 32 bits = data, upper 32 bits = gen
