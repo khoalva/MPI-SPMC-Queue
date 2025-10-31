@@ -17,7 +17,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
     MPI_TRY(mpi_init(argc, argv, &queue->mpi_ctx));
 
     if (mpi_get_size(&queue->mpi_ctx) < 2) {
-        fprintf(stderr, "At least two processes (1 producer, 1+ consumer) are required.\n");
+        // fprintf(stderr, "At least two processes (1 producer, 1+ consumer) are required.\n");
         mpi_finalize();
         return -1;
     }
@@ -29,7 +29,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
     if (is_producer) {
         queue->cells = malloc(queue->size * sizeof(spmc_cell_t));
         if (!queue->cells) {
-            fprintf(stderr, "Failed to allocate memory for queue cells.\n");
+            // fprintf(stderr, "Failed to allocate memory for queue cells.\n");
             mpi_finalize();
             return -1;
         }
@@ -82,7 +82,7 @@ void spmc_queue_destroy(spmc_queue_t *queue) {
         queue->cells = NULL;
     }
     
-    printf("SPMC Queue destroyed on rank %d\n", mpi_get_rank(&queue->mpi_ctx));
+    // printf("SPMC Queue destroyed on rank %d\n", mpi_get_rank(&queue->mpi_ctx));
     mpi_finalize();
 }
 
@@ -114,8 +114,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             int tail_val = queue->tail;
             MPI_TRY(mpi_accumulate(&tail_val, 1, MPI_INT, 0, gap_disp, MPI_REPLACE, &queue->win_cells));
             
-            printf("[ENQUEUE][rank %d] Contention at pos %d. Cell rank=%d, marking gap=%d\n", 
-                   mpi_get_rank(&queue->mpi_ctx), pos, cell_rank, queue->tail);
+            // printf("[ENQUEUE][rank %d] Contention at pos %d. Cell rank=%d, marking gap=%d\n", 
+            //        mpi_get_rank(&queue->mpi_ctx), pos, cell_rank, queue->tail);
             // Continue loop (Line 12: end while)
         } else {
             // Line 8: Write(cells[tail(mod N)].data, data)
@@ -128,8 +128,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             int tail_val = queue->tail;
             MPI_TRY(mpi_accumulate(&tail_val, 1, MPI_INT, 0, rank_disp, MPI_REPLACE, &queue->win_cells));
             
-            printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | tail=%d\n",
-                   mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
+            // printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | tail=%d\n",
+            //        mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
             
             // Line 10: success ← TRUE
             success = true;
@@ -178,8 +178,7 @@ static int spmc_queue_dequeue_backoff(spmc_queue_t *queue) {
     int pos = rank % queue->size;
     MPI_Aint disp = pos * sizeof(spmc_cell_t);
     
-    printf("[DEQUEUE][rank %d] Fetched rank=%d, pos=%d\n", 
-           mpi_get_rank(&queue->mpi_ctx), rank, pos);
+
     
     // Line 4: while ¬success do
     while (!success && retry_count < MAX_DEQUEUE_RETRIES && wait_count < 10) {
@@ -191,8 +190,8 @@ static int spmc_queue_dequeue_backoff(spmc_queue_t *queue) {
                                     0, disp, 3, MPI_INT,
                                     MPI_NO_OP, &queue->win_cells));
         
-        printf("[DEQUEUE][rank %d] Read cell at pos %d: cell.rank=%d, cell.data=%d, cell.gap=%d\n",
-               mpi_get_rank(&queue->mpi_ctx), pos, c.rank, c.data, c.gap);
+        // printf("[DEQUEUE][rank %d] Read cell at pos %d: cell.rank=%d, cell.data=%d, cell.gap=%d\n",
+        //        mpi_get_rank(&queue->mpi_ctx), pos, c.rank, c.data, c.gap);
         
         // Line 6: if c.rank = rank then
         if (c.rank == rank) {
@@ -204,8 +203,8 @@ static int spmc_queue_dequeue_backoff(spmc_queue_t *queue) {
             int empty_val = EMPTY_CELL;
             MPI_TRY(mpi_accumulate(&empty_val, 1, MPI_INT, 0, rank_disp, MPI_REPLACE, &queue->win_cells));
             
-            printf("[DEQUEUE][rank %d] SUCCESS: Dequeued data=%d at pos=%d, rank=%d (waited %d times)\n", 
-                   mpi_get_rank(&queue->mpi_ctx), data, pos, rank, wait_count);
+            // printf("[DEQUEUE][rank %d] SUCCESS: Dequeued data=%d at pos=%d, rank=%d (waited %d times)\n", 
+            //        mpi_get_rank(&queue->mpi_ctx), data, pos, rank, wait_count);
             
             // Line 9: success ← TRUE
             success = true;
@@ -216,8 +215,8 @@ static int spmc_queue_dequeue_backoff(spmc_queue_t *queue) {
             int no_op_int = 0;
             MPI_TRY(mpi_fetch_and_op(&no_op_int, &gap, MPI_INT, 0, gap_disp, MPI_NO_OP, &queue->win_cells));
             
-            printf("[DEQUEUE][rank %d] Cell rank mismatch: cell.rank=%d, my_rank=%d, gap=%d\n",
-                   mpi_get_rank(&queue->mpi_ctx), c.rank, rank, gap);
+            // printf("[DEQUEUE][rank %d] Cell rank mismatch: cell.rank=%d, my_rank=%d, gap=%d\n",
+            //        mpi_get_rank(&queue->mpi_ctx), c.rank, rank, gap);
             
             // Line 12: if gap ≥ rank then
             if (gap >= rank) {
@@ -228,8 +227,8 @@ static int spmc_queue_dequeue_backoff(spmc_queue_t *queue) {
                                             0, disp, 3, MPI_INT,
                                             MPI_NO_OP, &queue->win_cells));
                 
-                printf("[DEQUEUE][rank %d] Gap condition (gap=%d >= rank=%d), re-read cell: cell.rank=%d\n",
-                       mpi_get_rank(&queue->mpi_ctx), gap, rank, c2.rank);
+                // printf("[DEQUEUE][rank %d] Gap condition (gap=%d >= rank=%d), re-read cell: cell.rank=%d\n",
+                //        mpi_get_rank(&queue->mpi_ctx), gap, rank, c2.rank);
                 
                 // Line 14: if c.rank ≠ rank then
                 if (c2.rank != rank) {
@@ -240,8 +239,8 @@ static int spmc_queue_dequeue_backoff(spmc_queue_t *queue) {
                     retry_count++;
                     wait_count = 0;
                     
-                    printf("[DEQUEUE][rank %d] Gap detected! Fetching new rank=%d, pos=%d (retry #%d)\n", 
-                           mpi_get_rank(&queue->mpi_ctx), rank, pos, retry_count);
+                    // printf("[DEQUEUE][rank %d] Gap detected! Fetching new rank=%d, pos=%d (retry #%d)\n", 
+                    //        mpi_get_rank(&queue->mpi_ctx), rank, pos, retry_count);
                 } else {
                     // Line 17: data ← c.data
                     data = c2.data;
@@ -251,16 +250,16 @@ static int spmc_queue_dequeue_backoff(spmc_queue_t *queue) {
                     int empty_val = EMPTY_CELL;
                     MPI_TRY(mpi_accumulate(&empty_val, 1, MPI_INT, 0, rank_disp, MPI_REPLACE, &queue->win_cells));
                     
-                    printf("[DEQUEUE][rank %d] SUCCESS (after gap check): Dequeued data=%d at pos=%d, rank=%d\n", 
-                           mpi_get_rank(&queue->mpi_ctx), data, pos, rank);
+                    // printf("[DEQUEUE][rank %d] SUCCESS (after gap check): Dequeued data=%d at pos=%d, rank=%d\n", 
+                    //        mpi_get_rank(&queue->mpi_ctx), data, pos, rank);
                     
                     // Line 19: success ← TRUE
                     success = true;
                 }
             } else {
                 // Line 22: wait()
-                printf("[DEQUEUE][rank %d] Waiting for producer: gap=%d < rank=%d\n",
-                       mpi_get_rank(&queue->mpi_ctx), gap, rank);
+                // printf("[DEQUEUE][rank %d] Waiting for producer: gap=%d < rank=%d\n",
+                //        mpi_get_rank(&queue->mpi_ctx), gap, rank);
                 wait_count++;
                 usleep(10);
             }

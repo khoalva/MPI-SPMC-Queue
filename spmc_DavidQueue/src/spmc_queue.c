@@ -9,7 +9,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
     MPI_TRY(mpi_init(argc, argv, &queue->mpi_ctx));
     
     if (mpi_get_size(&queue->mpi_ctx) < 2) {
-        fprintf(stderr, "At least two processes are required\n");
+        // fprintf(stderr, "At least two processes are required\n");
         mpi_finalize();
         return -1;
     }
@@ -25,7 +25,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
     
     if (mpi_is_root(&queue->mpi_ctx)) {
         if (!queue->head || !queue->items) {
-            fprintf(stderr, "Memory allocation failed\n");
+            // fprintf(stderr, "Memory allocation failed\n");
             return -1;
         }
         
@@ -45,8 +45,8 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
         }
         
         // CRITICAL: Add memory barrier after initialization
-        printf("[INIT] Rank %d: Memory initialized, first few items: %d, %d, %d\n",
-               mpi_get_rank(&queue->mpi_ctx), queue->items[0], queue->items[1], queue->items[2]);
+        // printf("[INIT] Rank %d: Memory initialized, first few items: %d, %d, %d\n",
+        //        mpi_get_rank(&queue->mpi_ctx), queue->items[0], queue->items[1], queue->items[2]);
     }
     
     // Create MPI windows using the custom library
@@ -90,14 +90,14 @@ void spmc_queue_destroy(spmc_queue_t *queue) {
     
     mpi_finalize();
     
-    printf("SPMC Queue destroyed on rank %d\n", mpi_get_rank(&queue->mpi_ctx));
+    // printf("SPMC Queue destroyed on rank %d\n", mpi_get_rank(&queue->mpi_ctx));
 }
 
 int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     if (!spmc_queue_is_enqueuer(queue)) return -1;
     
     if (value < 0 || value > MAX_VALUE) {
-        fprintf(stderr, "Invalid enqueue value: %d\n", value);
+        // fprintf(stderr, "Invalid enqueue value: %d\n", value);
         return -1;
     }
     
@@ -107,7 +107,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
 
     // Bounds checking - CRITICAL SAFETY CHECK
     if (element_offset >= MAX_ROWS * MAX_COLS) {
-        fprintf(stderr, "FATAL: Calculated element offset %zu exceeds bounds\n", element_offset);
+        // fprintf(stderr, "FATAL: Calculated element offset %zu exceeds bounds\n", element_offset);
         return -1;
     }
 
@@ -125,7 +125,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         // Move to next row
         queue->eng_row++;
         if (queue->eng_row >= MAX_ROWS) {
-            fprintf(stderr, "Row limit exceeded\n");
+            // fprintf(stderr, "Row limit exceeded\n");
             return -1;
         }
         queue->tail = 0;
@@ -136,12 +136,12 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         
         // Bounds checking for new position
         if (new_element_offset >= MAX_ROWS * MAX_COLS) {
-            fprintf(stderr, "FATAL: New element offset %zu exceeds bounds\n", new_element_offset);
+            // fprintf(stderr, "FATAL: New element offset %zu exceeds bounds\n", new_element_offset);
             return -1;
         }
         
-        printf("[ENQ_OFFSET_DEBUG] Rank %d: New element offset = %zu, byte offset = %zu for (row:%d, col:%d)\n",
-               mpi_get_rank(&queue->mpi_ctx), new_element_offset, new_byte_offset, queue->eng_row, queue->tail);
+        // printf("[ENQ_OFFSET_DEBUG] Rank %d: New element offset = %zu, byte offset = %zu for (row:%d, col:%d)\n",
+        //        mpi_get_rank(&queue->mpi_ctx), new_element_offset, new_byte_offset, queue->eng_row, queue->tail);
 
         int dummy_val;
         MPI_TRY(mpi_fetch_and_op(&value, &dummy_val, MPI_INT, 0, new_byte_offset, MPI_REPLACE, &queue->win_items));
@@ -151,11 +151,11 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         MPI_TRY(mpi_accumulate(&queue->eng_row, 1, MPI_INT, 0, 0, MPI_REPLACE, &queue->win_row));
 ;
 
-        printf("Rank %d announced completed row %d after enqueuing: %d at (row: %d, col: %d)\n", 
-               mpi_get_rank(&queue->mpi_ctx), queue->eng_row - 1, value, queue->eng_row, queue->tail);
+        // printf("Rank %d announced completed row %d after enqueuing: %d at (row: %d, col: %d)\n", 
+        //        mpi_get_rank(&queue->mpi_ctx), queue->eng_row - 1, value, queue->eng_row, queue->tail);
     } else {
-        printf("Rank %d enqueued: %d (row: %d, col: %d)\n", 
-               mpi_get_rank(&queue->mpi_ctx), value, queue->eng_row, queue->tail);
+        // printf("Rank %d enqueued: %d (row: %d, col: %d)\n", 
+        //        mpi_get_rank(&queue->mpi_ctx), value, queue->eng_row, queue->tail);
     }
     
     // Increment tail
@@ -186,7 +186,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
 
     // Bounds checking
     if (head_element_offset >= MAX_ROWS) {
-        fprintf(stderr, "FATAL: Head element offset %zu exceeds MAX_ROWS\n", head_element_offset);
+        // fprintf(stderr, "FATAL: Head element offset %zu exceeds MAX_ROWS\n", head_element_offset);
         return -1;
     }
 
@@ -202,7 +202,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
 
     // Bounds checking
     if (items_element_offset >= MAX_ROWS * MAX_COLS) {
-        fprintf(stderr, "FATAL: Items element offset %zu exceeds bounds\n", items_element_offset);
+        // fprintf(stderr, "FATAL: Items element offset %zu exceeds bounds\n", items_element_offset);
         return -1;
     }
 
@@ -214,12 +214,12 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     
     // Step 4: Check what we got
     if (val == L) { 
-        printf("Rank %d found empty cell (val=%d) at (row: %d, col: %d)\n", 
-               mpi_get_rank(&queue->mpi_ctx), val, deq_row, head);
+        // printf("Rank %d found empty cell (val=%d) at (row: %d, col: %d)\n", 
+        //        mpi_get_rank(&queue->mpi_ctx), val, deq_row, head);
         return -1;
     } else {
-        printf("Rank %d dequeued: %d (row: %d, col: %d)\n", 
-               mpi_get_rank(&queue->mpi_ctx), val, deq_row, head);
+        // printf("Rank %d dequeued: %d (row: %d, col: %d)\n", 
+        //        mpi_get_rank(&queue->mpi_ctx), val, deq_row, head);
         return val;
     }
 }

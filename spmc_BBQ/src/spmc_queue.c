@@ -16,7 +16,7 @@ static inline double get_time_us() {
 
 static inline void print_timing(const char* operation, double start_time, int rank) {
     double elapsed = get_time_us() - start_time;
-    printf("[TIMER][Rank %d] %s: %.2f μs\n", rank, operation, elapsed);
+    // printf("[TIMER][Rank %d] %s: %.2f μs\n", rank, operation, elapsed);
 }
 
 
@@ -27,7 +27,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
     MPI_TRY(mpi_init(argc, argv, &queue->mpi_ctx));
 
     if (mpi_get_size(&queue->mpi_ctx) < 2) {
-        fprintf(stderr, "At least two processes (1 producer, 1+ consumer) are required.\n");
+        // fprintf(stderr, "At least two processes (1 producer, 1+ consumer) are required.\n");
         mpi_finalize();
         return -1;
     }
@@ -43,7 +43,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
     // Initialize Structure (main queue structure)
     queue->q = malloc(sizeof(structure_t));
     if (!queue->q) {
-        fprintf(stderr, "Failed to allocate memory for Structure.\n");
+        // fprintf(stderr, "Failed to allocate memory for Structure.\n");
         mpi_finalize();
         return -1;
     }
@@ -57,7 +57,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
            // Initialize Producer structure
         queue->p = malloc(sizeof(producer_t));
         if (!queue->p) {
-            fprintf(stderr, "Failed to allocate memory for Producer structure.\n");
+            // fprintf(stderr, "Failed to allocate memory for Producer structure.\n");
             free(queue->q);
             mpi_finalize();
             return -1;
@@ -66,7 +66,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
         // Initialize items array
         queue->q->items = malloc(MAX_QUEUE_SIZE * sizeof(cell_t));
         if (!queue->q->items) {
-            fprintf(stderr, "Failed to allocate memory for queue items.\n");
+            // fprintf(stderr, "Failed to allocate memory for queue items.\n");
             // TODO: Add proper cleanup
             return -1;
         }
@@ -80,7 +80,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
         int num_consumers = size - 1;
         queue->q->heads = malloc(num_consumers * sizeof(int));
         if (!queue->q->heads) {
-            fprintf(stderr, "Failed to allocate memory for heads array.\n");
+            // fprintf(stderr, "Failed to allocate memory for heads array.\n");
             // TODO: Add proper cleanup
             return -1;
         }
@@ -118,7 +118,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
         // Initialize Consumer structure  
         queue->c = malloc(sizeof(consumer_t));
         if (!queue->c) {
-            fprintf(stderr, "Failed to allocate memory for Consumer structure.\n");
+            // fprintf(stderr, "Failed to allocate memory for Consumer structure.\n");
             free(queue->q);
             mpi_finalize();
             return -1;
@@ -177,7 +177,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
                                  queue->q->win_sync_bitmap};
     MPI_TRY(mpi_win_lock_all_multiple(all_windows, 5));
     // print_queue_bitmaps(queue, 5, 5);
-    printf("GWMQ SPMC Queue initialized on rank %d/%d\n", rank, size);
+    // printf("GWMQ SPMC Queue initialized on rank %d/%d\n", rank, size);
 
     return MPI_SUCCESS;
 }
@@ -187,7 +187,7 @@ void spmc_queue_destroy(spmc_queue_t *queue) {
     if (!queue) return;
     // print_queue_bitmaps(queue, 5, 5);
     int rank = mpi_get_rank(&queue->mpi_ctx);
-    printf("[Rank %d] Starting queue destruction\n", rank);
+    // printf("[Rank %d] Starting queue destruction\n", rank);
     
     // // Unlock and destroy MPI windows
     mpi_window_t all_windows[] = {queue->q->win_items, queue->q->win_heads, 
@@ -203,7 +203,7 @@ void spmc_queue_destroy(spmc_queue_t *queue) {
 
     // Free memory if this is the producer
     if (spmc_queue_is_enqueuer(queue)) {
-        printf("[Rank %d] Cleaning up producer resources\n", rank);
+        // printf("[Rank %d] Cleaning up producer resources\n", rank);
         
         if (queue->q->items) {
             free(queue->q->items);
@@ -241,7 +241,7 @@ void spmc_queue_destroy(spmc_queue_t *queue) {
         }
         
     } else {
-        printf("[Rank %d] Cleaning up consumer resources\n", rank);
+        // printf("[Rank %d] Cleaning up consumer resources\n", rank);
         
         // Consumer cleanup - bitmap structures but no data
         // For consumers, bitmap data pointers are NULL, so only free structures
@@ -267,22 +267,22 @@ void spmc_queue_destroy(spmc_queue_t *queue) {
 
     // Free structure memory
     if (queue->p) {
-        printf("[Rank %d] Freeing producer structure\n", rank);
+        // printf("[Rank %d] Freeing producer structure\n", rank);
         free(queue->p);
         queue->p = NULL;
     }
     if (queue->c) {
-        printf("[Rank %d] Freeing consumer structure\n", rank);
+        // printf("[Rank %d] Freeing consumer structure\n", rank);
         free(queue->c);
         queue->c = NULL;
     }
     if (queue->q) {
-        printf("[Rank %d] Freeing queue structure\n", rank);
+        // printf("[Rank %d] Freeing queue structure\n", rank);
         free(queue->q);
         queue->q = NULL;
     }
 
-    printf("GWMQ SPMC Queue destroyed on rank %d\n", rank);
+    // printf("GWMQ SPMC Queue destroyed on rank %d\n", rank);
     mpi_finalize();
 }
 
@@ -295,10 +295,10 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     // Find safe index from tail in map
     int old_tail = queue->p->tail;
     queue->p->tail = find_safe_index_from(queue->p->tail, queue->p->map, 0); // Using row 0 for producer map
-    printf("[Rank %d][ENQUEUE] find_safe_index_from(%d) returned %d\n", rank, old_tail, queue->p->tail);
+    // printf("[Rank %d][ENQUEUE] find_safe_index_from(%d) returned %d\n", rank, old_tail, queue->p->tail);
     fflush(stdout);
     if (queue->p->tail == -1) {
-        fprintf(stderr, "[Rank %d][ENQUEUE ERROR] No safe index found in sync_bitmap\n", rank);
+        // fprintf(stderr, "[Rank %d][ENQUEUE ERROR] No safe index found in sync_bitmap\n", rank);
         return -1;
     }
 
@@ -314,16 +314,14 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell, MPI_UINT64_T, 0, offset, 
                              MPI_REPLACE, &queue->q->win_items));
     
-    printf("[Rank %d][ENQUEUE] Swapped at tail %d (row %d), old_cell: {data=%d, gen=%d}, new_cell: {data=%d, gen=%d}\n", 
-           rank, queue->p->tail, queue->p->enq_row, GET_DATA(old_cell), GET_GEN(old_cell), GET_DATA(new_cell), GET_GEN(new_cell));
-    
+
     // Check if we need to move to next row
     if (GET_DATA(old_cell) == T && GET_GEN(old_cell) == queue->p->enq_row) {
         
         // Synchronize bitmap from remote BITMAP[enq_row] to local sync_bitmap
         // MPI_GET: sync_bitmap = SYNC(BITMAP[enq_row])
 
-        sync_bitmap_row(queue, queue->p->enq_row, queue->p->map);
+       // sync_bitmap_row(queue, queue->p->enq_row, queue->p->map);
         print_bitmap(queue->p->map, 1, 64, "Producer local sync_bitmap after GET");
         // Heuristic: Based on the index we found need to reset and number of consumers
         int num_consumers = mpi_get_size(&queue->mpi_ctx) - 1;
@@ -345,7 +343,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         // Find safe index again and retry swap
         queue->p->tail = find_safe_index_from(queue->p->tail, queue->p->map, 0); // Still use row 0 for producer map
         if (queue->p->tail == -1) {
-            fprintf(stderr, "No safe index found after row increment\n");
+            // fprintf(stderr, "No safe index found after row increment\n");
             return -1;
         }
         
@@ -359,8 +357,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell_retry, MPI_UINT64_T, 0, offset, 
                              MPI_REPLACE, &queue->q->win_items));
         
-        printf("[Rank %d][ENQUEUE] (2nd try) Swapped at tail %d (row %d), old_cell: {data=%d, gen=%d}, new_cell: {data=%d, gen=%d}\n", 
-           rank, queue->p->tail, queue->p->enq_row, GET_DATA(old_cell_retry), GET_GEN(old_cell_retry), GET_DATA(new_cell), GET_GEN(new_cell));
+        // printf("[Rank %d][ENQUEUE] (2nd try) Swapped at tail %d (row %d), old_cell: {data=%d, gen=%d}, new_cell: {data=%d, gen=%d}\n", 
+        //    rank, queue->p->tail, queue->p->enq_row, GET_DATA(old_cell_retry), GET_GEN(old_cell_retry), GET_DATA(new_cell), GET_GEN(new_cell));
         
         // MPI_Accumulate + MPI_REPLACE (atomic write): WRITE(ROW, enq_row)
         MPI_TRY(mpi_accumulate(&queue->p->enq_row, 1, MPI_INT, 0, 0,
@@ -385,23 +383,20 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     
     // [TIMER 1] READ(ROW) - atomic read operation
     // double read_row_start = get_time_us();
-    printf("[Rank %d][DEQUEUE] Starting dequeue operation...\n", rank);
+    // printf("[Rank %d][DEQUEUE] Starting dequeue operation...\n", rank);
     fflush(stdout);
     
     int deq_row;
     int zero = 0;
-    printf("[Rank %d][DEQUEUE] About to fetch ROW...\n", rank);
-    fflush(stdout);
+
     MPI_TRY(mpi_fetch_and_op(&zero, &deq_row, MPI_INT, 0, 0, 
                              MPI_NO_OP, &queue->q->win_row));
-    printf("[Rank %d][DEQUEUE] Fetched ROW = %d\n", rank, deq_row);
-    fflush(stdout);
+
     // print_timing("READ_ROW", read_row_start, rank);
 
     
     int is_new_row = (deq_row != queue->c->last_deq_row);
-    printf("[Rank %d][DEQUEUE] is_new_row=%d, last_deq_row=%d\n", rank, is_new_row, queue->c->last_deq_row);
-    fflush(stdout);
+
     
     if (is_new_row && deq_row > 0) {
         // [TIMER 2] SYNC_BITMAP read - potential bottleneck for multiple consumers
@@ -421,14 +416,14 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
         queue->c->last_value = T;
         queue->c->last_index = -1;
         queue->c->last_N = -1;
-        printf("[Rank %d][DEQUEUE] Updated last_deq_row to %d\n", rank, deq_row);
+        // printf("[Rank %d][DEQUEUE] Updated last_deq_row to %d\n", rank, deq_row);
     } else if (!is_new_row && queue->c->last_value == L) {
-        printf("[Rank %d][DEQUEUE] No new row and last value was L - returning empty\n", rank);
+        // printf("[Rank %d][DEQUEUE] No new row and last value was L - returning empty\n", rank);
         usleep(100000);
         return -1;
     }
     
-    printf("[Rank %d][DEQUEUE] Passed early-exit checks, last_value=%d\n", rank, queue->c->last_value);
+    // printf("[Rank %d][DEQUEUE] Passed early-exit checks, last_value=%d\n", rank, queue->c->last_value);
     fflush(stdout);
     
     // [TIMER 3] HEADS contention - major serialization bottleneck
@@ -437,11 +432,11 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     int one = 1;
     MPI_Aint head_offset = deq_row;  // No need to multiply by sizeof(int), MPI window displacement unit handles it
     
-    printf("[Rank %d][DEQUEUE] About to fetch_and_add HEADS at offset %ld...\n", rank, (long)head_offset);
+    // printf("[Rank %d][DEQUEUE] About to fetch_and_add HEADS at offset %ld...\n", rank, (long)head_offset);
     fflush(stdout);
     MPI_TRY(mpi_fetch_and_op(&one, &head, MPI_INT, 0, head_offset,
                              MPI_SUM, &queue->q->win_heads));
-    printf("[Rank %d][DEQUEUE] Fetched HEAD = %d\n", rank, head);
+    // printf("[Rank %d][DEQUEUE] Fetched HEAD = %d\n", rank, head);
     fflush(stdout);
     // print_timing("HEADS_FETCH_AND_ADD", heads_start, rank);
     
@@ -457,7 +452,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     int index = find_Nth_safe_index(head, queue->c->map, 0, queue->c->last_index, queue->c->last_N);
     // print_timing("BITMAP_SEARCH", bitmap_search_start, rank);
     if (index == -1) {
-        fprintf(stderr, "[Rank %d][DEQUEUE ERROR] No safe index found for head=%d\n", rank, head);
+        // fprintf(stderr, "[Rank %d][DEQUEUE ERROR] No safe index found for head=%d\n", rank, head);
         queue->c->last_value = L;  // Set last_value to L when no safe index found
         return -1;  // None - no item available
     }
@@ -507,7 +502,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
         usleep(100);  // Small sleep to avoid busy looping
         return -1;  // None - empty or wrong generation
     } else {
-        printf("[Rank %d][DEQUEUE] Successfully dequeued value: %d at index=%d, head=%d\n", rank, GET_DATA(old_cell), index, head);
+        // printf("[Rank %d][DEQUEUE] Successfully dequeued value: %d at index=%d, head=%d\n", rank, GET_DATA(old_cell), index, head);
         // print_timing("DEQUEUE_TOTAL", dequeue_start, rank);
         return GET_DATA(old_cell);  // Return the dequeued value
     }
