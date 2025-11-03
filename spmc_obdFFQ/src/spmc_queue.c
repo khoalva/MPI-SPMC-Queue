@@ -143,8 +143,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             int tail_val = queue->tail;
             MPI_TRY(mpi_accumulate(&tail_val, 1, MPI_INT, 0, rank_disp, MPI_REPLACE, &queue->win_ranks));
             
-            printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | tail=%d\n",
-                   mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
+            // printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | tail=%d\n",
+            //        mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
             
             // Line 10: success ← TRUE
             success = true;
@@ -211,8 +211,8 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
                 // Line 7: data ← c.data
                 out_data[i] = datas_buf[i];
 
-                printf("[DEQUEUE][rank %d] SUCCESS: Dequeued data=%d at pos=%d, rank=%d (waited %d times)\n", 
-                       mpi_get_rank(&queue->mpi_ctx), out_data[i], pos, rank + i, wait_count);
+                // printf("[DEQUEUE][rank %d] SUCCESS: Dequeued data=%d at pos=%d, rank=%d (waited %d times)\n", 
+                //        mpi_get_rank(&queue->mpi_ctx), out_data[i], pos, rank + i, wait_count);
 
                 i++;
             } else if(gaps_buf[i] >= rank + i) {
