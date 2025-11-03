@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 199309L
+#define _GNU_SOURCE
 #include "spmc_queue.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,10 +49,25 @@ int main(int argc, char *argv[]) {
         int items_consumed = 0;
         int max_attempts = 50; // More attempts to catch items as they're produced
         
+        // Get batch size from queue implementation
+        int batch_size = spmc_queue_get_batch_size(&queue);
+        int *buffer = malloc(batch_size * sizeof(int));
+        if (!buffer) {
+            fprintf(stderr, "Rank %d: Failed to allocate dequeue buffer\n", mpi_get_rank(&queue.mpi_ctx));
+            spmc_queue_destroy(&queue);
+            return 1;
+        }
+        
         for (int attempt = 0; attempt < max_attempts; attempt++) {
-            int value = spmc_queue_dequeue(&queue);
-            if (value != -1) {
-                items_consumed++;
+            int count = spmc_queue_dequeue(&queue, buffer, batch_size);
+            
+            if (count > 0) {
+                items_consumed += count;
+                printf("Rank %d: Dequeued %d items: ", mpi_get_rank(&queue.mpi_ctx), count);
+                for (int i = 0; i < count; i++) {
+                    printf("%d ", buffer[i]);
+                }
+                printf("\n");
                 // Shorter delay when successfully consuming
                 usleep(40000); // 40ms
             } else {
@@ -58,6 +75,8 @@ int main(int argc, char *argv[]) {
                 usleep(20000); // 20ms - quick retry
             }
         }
+        
+        free(buffer);
         
         printf("Rank %d: Consumer finished, consumed %d items\n", 
                mpi_get_rank(&queue.mpi_ctx), items_consumed);
