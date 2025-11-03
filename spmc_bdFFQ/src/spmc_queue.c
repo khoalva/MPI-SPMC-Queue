@@ -147,6 +147,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
  * @return MPI_SUCCESS on success, -1 on failure.
  */
 int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
+    if (!out_data || max_count <= 0) return 0;
+    
     int rank;
     bool success = false;
     int retry_count = 0;
@@ -158,7 +160,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     
     // Allocate buffer for batch read
     spmc_cell_t *c = malloc(max_count * sizeof(spmc_cell_t));
-    if (!c) return -1;
+    if (!c) return 0;  // Failed to allocate, return 0 items dequeued
     int i = 0;
     // Line 4: while ¬success do
     while (!success && retry_count < MAX_DEQUEUE_RETRIES && wait_count < 10) {
@@ -202,7 +204,10 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
         }
     }
     
-    return success ? MPI_SUCCESS : -1;
+    free(c);
+    
+    // Return the number of items successfully dequeued
+    return i;
    
 }
 
@@ -231,4 +236,9 @@ size_t spmc_queue_get_capacity_bytes(spmc_queue_t *queue) {
         return queue->size * sizeof(spmc_cell_t) + sizeof(queue->head) + sizeof(queue->tail);
     }
     return 0;
+}
+
+int spmc_queue_get_batch_size(spmc_queue_t *queue) {
+
+    return BATCH_SIZE; // Default batch size for bdFFQ
 }

@@ -146,22 +146,23 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
  * @brief Dequeues an item using FFQ logic.
  * @return MPI_SUCCESS on success, -1 on failure.
  */
-int spmc_queue_dequeue(spmc_queue_t *queue) {
+int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
+    if (!out_data || max_count <= 0) return 0;
     
+    // dFFQ only supports single dequeue
     int rank;
     int one = 1;
     bool success = false;
     int retry_count = 0;
     int wait_count = 0;
     int data = -1;
+    
     // Line 2: rank ← FetchInc(head)
     MPI_TRY(mpi_fetch_and_op(&one, &rank, MPI_INT, 0, 0, MPI_SUM, &queue->win_head));
     
     retry_count++;
     int pos = rank % queue->size;
     MPI_Aint disp = pos * sizeof(spmc_cell_t);
-    
-
     
     // Line 4: while ¬success do
     while (!success && retry_count < MAX_DEQUEUE_RETRIES && wait_count < 10) {
@@ -213,7 +214,12 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     }
     
     // Line 26: return data
-    return data;
+    if (data == -1) {
+        return 0;  // No items dequeued
+    } else {
+        out_data[0] = data;  // Store the single dequeued value
+        return 1;  // Successfully dequeued 1 item
+    }
 }
 
 /**
@@ -230,6 +236,14 @@ void spmc_queue_print_stats(spmc_queue_t *queue) {
  */
 int spmc_queue_is_enqueuer(spmc_queue_t *queue) {
     return queue && mpi_is_root(&queue->mpi_ctx);
+}
+
+/**
+ * @brief Returns the batch size for dequeue operations.
+ */
+int spmc_queue_get_batch_size(spmc_queue_t *queue) {
+    // dFFQ only supports single dequeue
+    return 1;
 }
 
 /**

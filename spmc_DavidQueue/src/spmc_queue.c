@@ -163,9 +163,10 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     return MPI_SUCCESS;
 }
 
-int spmc_queue_dequeue(spmc_queue_t *queue) {
-    if (spmc_queue_is_enqueuer(queue)) return -1;
+int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
+    if (spmc_queue_is_enqueuer(queue) || !out_data || max_count <= 0) return 0;
     
+    // DavidQueue only supports single dequeue
     int deq_row, head, val;
     
     // Step 1: AtomicRead ROW - MPI_Fetch_and_op with MPI_NO_OP
@@ -176,7 +177,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     if (deq_row < 0) {
         printf("Rank %d: No completed rows available yet (deq_row=%d)\n", 
                mpi_get_rank(&queue->mpi_ctx), deq_row);
-        return -1;
+        return 0;  // No items dequeued
     }
     
     // Step 2: FetchInc HEAD[deq_row] - MPI_Fetch_and_op with MPI_SUM
@@ -187,7 +188,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     // Bounds checking
     if (head_element_offset >= MAX_ROWS) {
         // fprintf(stderr, "FATAL: Head element offset %zu exceeds MAX_ROWS\n", head_element_offset);
-        return -1;
+        return 0;
     }
 
     // printf("[DEQ_OFFSET_DEBUG] Rank %d: Head element offset = %zu, byte offset = %zu for deq_row %d\n",
@@ -203,7 +204,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     // Bounds checking
     if (items_element_offset >= MAX_ROWS * MAX_COLS) {
         // fprintf(stderr, "FATAL: Items element offset %zu exceeds bounds\n", items_element_offset);
-        return -1;
+        return 0;
     }
 
     // printf("[DEQ_OFFSET_DEBUG] Rank %d: Items element offset = %zu, byte offset = %zu for (row:%d, col:%d)\n",
@@ -216,11 +217,12 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     if (val == L) { 
         // printf("Rank %d found empty cell (val=%d) at (row: %d, col: %d)\n", 
         //        mpi_get_rank(&queue->mpi_ctx), val, deq_row, head);
-        return -1;
+        return 0;  // No items dequeued
     } else {
         // printf("Rank %d dequeued: %d (row: %d, col: %d)\n", 
         //        mpi_get_rank(&queue->mpi_ctx), val, deq_row, head);
-        return val;
+        out_data[0] = val;  // Store the single dequeued value
+        return 1;  // Successfully dequeued 1 item
     }
 }
 
@@ -238,6 +240,11 @@ void spmc_queue_print_stats(spmc_queue_t *queue) {
 
 int spmc_queue_is_enqueuer(spmc_queue_t *queue) {
     return queue && mpi_is_root(&queue->mpi_ctx);
+}
+
+int spmc_queue_get_batch_size(spmc_queue_t *queue) {
+    // DavidQueue only supports single dequeue
+    return 1;
 }
 
 size_t spmc_queue_get_capacity_bytes(const spmc_queue_t *queue) {

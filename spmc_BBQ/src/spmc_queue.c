@@ -373,9 +373,10 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     return MPI_SUCCESS;
 }
 
-int spmc_queue_dequeue(spmc_queue_t *queue) {
-    if (spmc_queue_is_enqueuer(queue)) return -1;  // Only consumers can dequeue
+int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
+    if (spmc_queue_is_enqueuer(queue) || !out_data || max_count <= 0) return 0;
     
+    // BBQ only supports single dequeue
     int rank = mpi_get_rank(&queue->mpi_ctx);
     int consumer_idx = rank - 1;  // Consumer index (0-based)
     
@@ -420,7 +421,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     } else if (!is_new_row && queue->c->last_value == L) {
         // printf("[Rank %d][DEQUEUE] No new row and last value was L - returning empty\n", rank);
         usleep(100000);
-        return -1;
+        return 0;  // No items dequeued
     }
     
     // printf("[Rank %d][DEQUEUE] Passed early-exit checks, last_value=%d\n", rank, queue->c->last_value);
@@ -454,7 +455,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
     if (index == -1) {
         // fprintf(stderr, "[Rank %d][DEQUEUE ERROR] No safe index found for head=%d\n", rank, head);
         queue->c->last_value = L;  // Set last_value to L when no safe index found
-        return -1;  // None - no item available
+        return 0;  // No items dequeued
     }
     
     // Update optimization state for next call
@@ -500,11 +501,12 @@ int spmc_queue_dequeue(spmc_queue_t *queue) {
         queue->c->last_value = L;
         // print_timing("DEQUEUE_TOTAL", dequeue_start, rank);
         usleep(100);  // Small sleep to avoid busy looping
-        return -1;  // None - empty or wrong generation
+        return 0;  // No items dequeued
     } else {
         // printf("[Rank %d][DEQUEUE] Successfully dequeued value: %d at index=%d, head=%d\n", rank, GET_DATA(old_cell), index, head);
         // print_timing("DEQUEUE_TOTAL", dequeue_start, rank);
-        return GET_DATA(old_cell);  // Return the dequeued value
+        out_data[0] = GET_DATA(old_cell);  // Store the dequeued value
+        return 1;  // Successfully dequeued 1 item
     }
 }
 
@@ -532,6 +534,11 @@ void spmc_queue_print_stats(spmc_queue_t *queue) {
 int spmc_queue_is_enqueuer(spmc_queue_t *queue) {
     if (!queue) return 0;
     return (mpi_get_rank(&queue->mpi_ctx) == 0);
+}
+
+int spmc_queue_get_batch_size(spmc_queue_t *queue) {
+    // BBQ doesn't support efficient batch dequeue, use single dequeue
+    return 1;
 }
 
 size_t spmc_queue_get_capacity_bytes(const spmc_queue_t *queue) {

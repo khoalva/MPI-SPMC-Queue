@@ -135,12 +135,22 @@ static int run_benchmark_test(spmc_queue_t *queue, const char *test_type) {
         struct timeval start_time, current_time;
         gettimeofday(&start_time, NULL);
         
+        // Get batch size from queue implementation
+        int batch_size = spmc_queue_get_batch_size(queue);
+        int *buffer = malloc(batch_size * sizeof(int));
+        if (!buffer) {
+            fprintf(stderr, "Rank %d: Failed to allocate dequeue buffer\n", mpi_rank);
+            benchmark_cleanup(&bench_ctx);
+            return 1;
+        }
+        
         while (items_consumed < total_items_to_consume && empty_attempts < max_empty_attempts) {
-            int value;
-            BENCHMARK_RECORD_DEQUEUE(&bench_ctx, value = spmc_queue_dequeue(queue));
+            int count;
+            BENCHMARK_RECORD_DEQUEUE(&bench_ctx, count = spmc_queue_dequeue(queue, buffer, batch_size));
             
-            if (value != -1) {
-                items_consumed++;
+            if (count > 0) {
+                // Successfully dequeued 'count' items
+                items_consumed += count;
                 empty_attempts = 0;
             } else {
                 empty_attempts++;
@@ -160,6 +170,8 @@ static int run_benchmark_test(spmc_queue_t *queue, const char *test_type) {
                 usleep(config.consumer_delay_us);
             }
         }
+        
+        free(buffer);
         
         printf("Rank %d: Consumer completed - consumed %d items\\n", mpi_rank, items_consumed);
         

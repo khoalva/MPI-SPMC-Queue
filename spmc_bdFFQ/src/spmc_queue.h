@@ -8,6 +8,7 @@
 #define EMPTY_CELL -1
 #define DEQUEUED_CELL -2
 #define MAX_QUEUE_SIZE 110000
+#define BATCH_SIZE 5
 
 typedef struct {
     int rank;        // Producer rank
@@ -35,5 +36,6 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value);
 int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count);
 void spmc_queue_print_stats(spmc_queue_t *queue);
 int spmc_queue_is_enqueuer(spmc_queue_t *queue);
+int spmc_queue_get_batch_size(spmc_queue_t *queue);
 size_t spmc_queue_get_capacity_bytes(spmc_queue_t *queue);
 #endif
