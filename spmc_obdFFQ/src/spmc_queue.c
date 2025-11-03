@@ -136,7 +136,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             // Line 8: Write(cells[tail(mod N)].data, data)
             // Write: MPI_Put (non-atomic)
             MPI_Aint data_disp = pos * sizeof(int);
-            MPI_TRY(mpi_put(&value, sizeof(int), MPI_BYTE, 0, data_disp, &queue->win_datas));
+            MPI_TRY(mpi_put(&value, 1, MPI_INT, 0, data_disp, &queue->win_datas));
             
             // Line 9: AtomicWrite(cells[tail(mod N)].rank, tail)
             // AtomicWrite: MPI_Accumulate with MPI_REPLACE
