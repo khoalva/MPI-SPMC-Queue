@@ -114,7 +114,7 @@ void benchmark_record_enqueue(benchmark_ctx_t *ctx, double latency_us, int succe
 /**
  * Record dequeue operation timing
  */
-void benchmark_record_dequeue(benchmark_ctx_t *ctx, double latency_us, int success);
+void benchmark_record_dequeue(benchmark_ctx_t *ctx, double latency_us, int count);
 
 /**
  * Record when producer finished all enqueue operations
@@ -186,7 +186,7 @@ void benchmark_cleanup(benchmark_ctx_t *ctx);
     double start_time = BENCHMARK_TIME_START(); \
     int result = (code); \
     double latency = BENCHMARK_TIME_END(start_time); \
-    benchmark_record_dequeue(ctx, latency, result != -1); \
+    benchmark_record_dequeue(ctx, latency, result); \
 } while(0)
 
 // Predefined test configurations

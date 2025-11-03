@@ -141,17 +141,17 @@ void benchmark_record_enqueue(benchmark_ctx_t *ctx, double latency_us, int succe
 /**
  * Record dequeue operation timing
  */
-void benchmark_record_dequeue(benchmark_ctx_t *ctx, double latency_us, int success) {
+void benchmark_record_dequeue(benchmark_ctx_t *ctx, double latency_us, int count) {
     if (!ctx) return;
     
     process_stats_t *stats = &ctx->local_stats;
     
     stats->total_dequeue_time_us += latency_us;
     
-    if (success) {
-        stats->items_consumed++;
+    if (count > 0) {
+        stats->items_consumed += count;  // Add the actual count of items dequeued
         
-        if (stats->items_consumed == 1) {
+        if (stats->items_consumed == count) {  // First dequeue operation
             stats->min_dequeue_latency_us = latency_us;
             stats->max_dequeue_latency_us = latency_us;
         } else {
