@@ -50,9 +50,14 @@ int main(int argc, char *argv[]) {
         int max_attempts = 50; // More attempts to catch items as they're produced
         
         for (int attempt = 0; attempt < max_attempts; attempt++) {
-            int value = spmc_queue_dequeue(&queue);
-            if (value != -1) {
-                items_consumed++;
+            int buffer[10]; // Buffer for batch dequeue
+            int count = spmc_queue_dequeue(&queue, buffer, 10);
+            
+            if (count > 0) {
+                items_consumed += count;
+                for (int i = 0; i < count; i++) {
+                    printf("%d ", buffer[i]);
+                }
                 // Shorter delay when successfully consuming
                 usleep(40000); // 40ms
             } else {
