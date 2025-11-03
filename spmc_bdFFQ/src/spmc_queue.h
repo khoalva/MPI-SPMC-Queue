@@ -8,8 +8,8 @@
 #define EMPTY_CELL -1
 #define DEQUEUED_CELL -2
 #define MAX_QUEUE_SIZE 110000
-#define BATCH_SIZE 3
-
+#define BATCH_SIZE 5
+#define MAX_WAIT_COUNT 20
 typedef struct {
     int rank;        // Producer rank
     int gap;         // Gap for ordering

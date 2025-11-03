@@ -163,7 +163,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     if (!c) return 0;  // Failed to allocate, return 0 items dequeued
     int i = 0;
     // Line 4: while ¬success do
-    while (!success && retry_count < MAX_DEQUEUE_RETRIES && wait_count < 10) {
+    while (!success && retry_count < MAX_DEQUEUE_RETRIES && wait_count < MAX_WAIT_COUNT) {
         // Line 5: c ← ReadCompositeSnap(cells[rank(mod N) : rank + max_count])
         spmc_cell_t no_op_val = {0};
         int pos = rank % queue->size;
