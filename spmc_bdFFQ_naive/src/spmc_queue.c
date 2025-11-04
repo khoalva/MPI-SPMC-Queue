@@ -202,7 +202,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
 }
 
 /**
- * @brief Dequeues an item using FFQ logic.
+ * @brief Dequeues an item using FFQ logic (refactored version).
  * @return Number of items dequeued.
  */
 int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
@@ -229,9 +229,11 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     // Line 2: pending ← [0, 1, ..., k-1], skipped ← []
     bool *pending = malloc(max_count * sizeof(bool));
     bool *skipped = malloc(max_count * sizeof(bool));
-    if (!pending || !skipped) {
+    bool *ready = malloc(max_count * sizeof(bool));
+    if (!pending || !skipped || !ready) {
         if (pending) free(pending);
         if (skipped) free(skipped);
+        if (ready) free(ready);
         free(ranks_buf);
         free(gaps_buf);
         free(datas_buf);
@@ -241,16 +243,18 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     for (int i = 0; i < max_count; i++) {
         pending[i] = true;
         skipped[i] = false;
+        ready[i] = false;
     }
+    
+    int no_op_val = 0;
+    int pos = rank % queue->size;
+    MPI_Aint disp = pos * sizeof(int);
     
     // Line 3: while TRUE do
     while (retry_count < MAX_DEQUEUE_RETRIES && wait_count < MAX_WAIT_COUNT) {
         retry_count++;
         
         // Line 4: rankSnap ← ReadCompositeSnap(ranks[rank : rank + k])
-        int no_op_val = 0;
-        int pos = rank % queue->size;
-        MPI_Aint disp = pos * sizeof(int);
         MPI_TRY(mpi_get_accumulate(&no_op_val, max_count, MPI_INT,
                                     ranks_buf, max_count, MPI_INT,
                                     0, disp, max_count, MPI_INT,
@@ -263,53 +267,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
             }
         }
         
-        // Line 6: if pending = [] then
-        bool all_done = true;
-        for (int i = 0; i < max_count; i++) {
-            if (pending[i]) {
-                all_done = false;
-                break;
-            }
-        }
-        
-        if (all_done) {
-            // Line 7: data ← Read(datas[rank : rank + k])
-            MPI_Aint data_disp = pos * sizeof(int);
-            MPI_TRY(mpi_get(datas_buf, max_count, MPI_INT, 0, data_disp, &queue->win_datas));
-            
-            for (int i = 0; i < max_count; i++) {
-                out_data[i] = datas_buf[i];
-            }
-            
-            // Line 8: AtomicWrite(ranks[rank + i : rank + k], -1) for i ∉ skipped
-            // Implemented by helper to update continuous non-skipped ranges
-            update_ranks_ranges(queue, rank, skipped, max_count);
-            
-            // Line 9: return data
-            free(pending);
-            free(skipped);
-            free(ranks_buf);
-            free(gaps_buf);
-            free(datas_buf);
-            return max_count;
-        }
-        
-        // Line 11: gapSnap ← ReadCompositeSnap(gaps[rank : rank + k])
-        MPI_TRY(mpi_get_accumulate(&no_op_val, max_count, MPI_INT,
-                                    gaps_buf, max_count, MPI_INT,
-                                    0, disp, max_count, MPI_INT,
-                                    MPI_NO_OP, &queue->win_gaps));
-        
-        // Line 12: skipped ← skipped ∪ {i ∈ pending | gapSnap[i] ≥ rank + i}
-        // Line 13: pending ← {i ∈ pending | gapSnap[i] < rank + i}
-        for (int i = 0; i < max_count; i++) {
-            if (pending[i] && gaps_buf[i] >= rank + i) {
-                skipped[i] = true;
-                pending[i] = false;
-            }
-        }
-        
-        // Line 14: if pending ≠ [] then
+        // Line 6: if pending ≠ [] then
         bool has_pending = false;
         for (int i = 0; i < max_count; i++) {
             if (pending[i]) {
@@ -319,16 +277,111 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
         }
         
         if (has_pending) {
-            // Line 15: wait()
-            wait_count++;
-            usleep(10);
+            // Line 7: gapSnap ← ReadCompositeSnap(gaps[rank : rank + k])
+            MPI_TRY(mpi_get_accumulate(&no_op_val, max_count, MPI_INT,
+                                        gaps_buf, max_count, MPI_INT,
+                                        0, disp, max_count, MPI_INT,
+                                        MPI_NO_OP, &queue->win_gaps));
+            
+            // Line 8: ready ← {i ∈ pending | gapSnap[i] ≥ rank + i}
+            bool has_ready = false;
+            for (int i = 0; i < max_count; i++) {
+                ready[i] = false;
+                if (pending[i] && gaps_buf[i] >= rank + i) {
+                    ready[i] = true;
+                    has_ready = true;
+                }
+            }
+            
+            // Line 9: if ready ≠ [] then
+            if (has_ready) {
+                // Line 10: rankSnap ← ReadCompositeSnap(ranks[rank : rank + k])
+                MPI_TRY(mpi_get_accumulate(&no_op_val, max_count, MPI_INT,
+                                            ranks_buf, max_count, MPI_INT,
+                                            0, disp, max_count, MPI_INT,
+                                            MPI_NO_OP, &queue->win_ranks));
+                
+                // Line 11: skipped ← skipped ∪ {i ∈ ready | rankSnap[i] ≠ rank + i}
+                for (int i = 0; i < max_count; i++) {
+                    if (ready[i] && ranks_buf[i] != rank + i) {
+                        skipped[i] = true;
+                    }
+                }
+                
+                // Line 12: pending ← pending \ ready
+                for (int i = 0; i < max_count; i++) {
+                    if (ready[i]) {
+                        pending[i] = false;
+                    }
+                }
+            }
+            // Line 13: end if
+            
+            // Line 14: if pending ≠ [] then
+            has_pending = false;
+            for (int i = 0; i < max_count; i++) {
+                if (pending[i]) {
+                    has_pending = true;
+                    break;
+                }
+            }
+            
+            if (has_pending) {
+                // Line 15: pending ← {i ∈ pending | gapSnap[i] < rank + i}
+                for (int i = 0; i < max_count; i++) {
+                    if (pending[i] && gaps_buf[i] >= rank + i) {
+                        pending[i] = false;
+                    }
+                }
+                
+                // Line 16: wait()
+                wait_count++;
+                usleep(10);
+                // Line 17: continue
+                continue;
+            }
+            // Line 18: end if
         }
-        // Line 17: end while
+        // Line 19: end if
+        
+        // Line 20: data ← Read(datas[rank : rank + k])
+        MPI_Aint data_disp = pos * sizeof(int);
+        MPI_TRY(mpi_get(datas_buf, max_count, MPI_INT, 0, data_disp, &queue->win_datas));
+        
+        // Copy only non-skipped data to output (for i ∉ skipped)
+        int out_idx = 0;
+        for (int i = 0; i < max_count; i++) {
+            if (!skipped[i]) {
+                out_data[out_idx++] = datas_buf[i];
+            }
+        }
+        
+        // Line 21: AtomicWrite(ranks[rank + i : rank + k], -1) for i ∉ skipped
+        update_ranks_ranges(queue, rank, skipped, max_count);
+        
+        // Line 22: return data (count of non-skipped items)
+        int dequeued_count = 0;
+        for (int i = 0; i < max_count; i++) {
+            if (!skipped[i]) {
+                dequeued_count++;
+            }
+        }
+        
+        free(pending);
+        free(skipped);
+        free(ready);
+        free(ranks_buf);
+        free(gaps_buf);
+        free(datas_buf);
+        return dequeued_count;
+        
+        // Line 23: end while
     }
     
     // Timeout or retry limit reached
     free(pending);
     free(skipped);
+    free(ready);
     free(ranks_buf);
     free(gaps_buf);
     free(datas_buf);
