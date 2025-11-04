@@ -8,7 +8,7 @@
 #define EMPTY_CELL -1
 #define DEQUEUED_CELL -2
 #define MAX_QUEUE_SIZE 110000
-#define BATCH_SIZE 5
+#define BATCH_SIZE 4
 #define MAX_DEQUEUE_RETRIES 10
 #define MAX_WAIT_COUNT 20
 typedef struct {

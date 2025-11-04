@@ -85,6 +85,31 @@ benchmark_config_t benchmark_config_stress_test(int duration_sec) {
     return config;
 }
 
+benchmark_config_t benchmark_config_enqueue_only_test(int num_items) {
+    benchmark_config_t config = BENCHMARK_ENQUEUE_ONLY_TEST;
+    config.num_items = num_items;
+    config.num_producers = 1;
+    config.num_consumers = 0;
+    config.producer_delay_us = 0;
+    config.consumer_delay_us = 0;
+    config.warmup_items = 0;
+    snprintf(config.test_name, sizeof(config.test_name), "Enqueue Only Test (%d items)", num_items);
+    return config;
+}
+
+benchmark_config_t benchmark_config_dequeue_only_test(int prefill_items, int num_items) {
+    benchmark_config_t config = BENCHMARK_DEQUEUE_ONLY_TEST;
+    config.num_items = num_items;
+    config.num_producers = 0;
+    config.num_consumers = 4;  // Default to 4 consumers
+    config.producer_delay_us = 0;
+    config.consumer_delay_us = 0;
+    config.warmup_items = prefill_items;  // Use warmup_items to store prefill count
+    snprintf(config.test_name, sizeof(config.test_name), 
+             "Dequeue Only Test (prefill: %d, dequeue: %d items)", prefill_items, num_items);
+    return config;
+}
+
 /**
  * Start benchmark timing
  */
@@ -287,7 +312,9 @@ int benchmark_aggregate_results(benchmark_ctx_t *ctx, void *mpi_comm) {
                   1, MPI_LONG, MPI_SUM, comm);
     
     // Validation: Ensure total_items_consumed doesn't exceed total_items_produced
-    if (ctx->results.total_items_consumed > ctx->results.total_items_produced) {
+    // EXCEPT for dequeue_only tests where produced items are prefilled (not counted)
+    if (ctx->results.total_items_consumed > ctx->results.total_items_produced && 
+        ctx->results.total_items_produced > 0) {
         if (ctx->mpi_rank == 0) {
             printf("WARNING: Items consumed (%ld) exceeds items produced (%ld)\n", 
                    ctx->results.total_items_consumed, ctx->results.total_items_produced);

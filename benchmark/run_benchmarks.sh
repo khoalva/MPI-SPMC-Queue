@@ -57,6 +57,8 @@ print_usage() {
     echo "  latency     - Latency analysis (recommended: -p 3)"
     echo "  scalability - Scalability testing (recommended: -p 9)"
     echo "  stress      - Stress testing (recommended: -p 7 = 1 producer + 6 consumers)"
+    echo "  enqueue_only - Enqueue-only throughput test (recommended: -p 1)"
+    echo "  dequeue_only - Dequeue-only throughput test with prefill (recommended: -p 5)"
     echo "  suite       - Run complete benchmark suite"
     echo "  all         - Same as suite"
     echo ""
@@ -78,6 +80,8 @@ print_usage() {
     echo "  $0 quick"
     echo "  $0 throughput -p 4"
     echo "  $0 stress -p 7  # Important: Use 7 processes for stress test!"
+    echo "  $0 enqueue_only -p 1  # Enqueue-only test with single producer"
+    echo "  $0 dequeue_only -p 5  # Dequeue-only test with 4 consumers (1 prefiller + 4 consumers)"
     echo "  $0 throughput -p 4 -s ../spmc_2004"
     echo "  $0 throughput -p 8 -H MPI-node1,MPI-node2,MPI-node3,MPI-node4"
     echo "  $0 suite -p 6 --export-csv -s ../spmc_impl"
@@ -90,6 +94,8 @@ print_usage() {
     echo "  - Latency: 3 processes (1 producer + 2 consumers)"
     echo "  - Scalability: 9 processes (1 producer + 8 consumers)"
     echo "  - Stress: 7 processes (1 producer + 6 consumers)"
+    echo "  - Enqueue Only: 1 process (single producer)"
+    echo "  - Dequeue Only: 5 processes (1 prefiller + 4 consumers)"
     echo ""
 }
 
@@ -153,7 +159,7 @@ while [[ $# -gt 0 ]]; do
             CHECK_LIBS=true
             shift
             ;;
-        quick|throughput|latency|scalability|stress|suite|all)
+        quick|throughput|latency|scalability|stress|enqueue_only|dequeue_only|suite|all)
             TEST_TYPE="$1"
             shift
             ;;
@@ -575,6 +581,12 @@ run_benchmark() {
         stress)
             timeout_seconds=150  # 2.5 minutes for stress test (config says 300s + buffer)
             ;;
+        enqueue_only)
+            timeout_seconds=15  # Enqueue-only test should be fast
+            ;;
+        dequeue_only)
+            timeout_seconds=15  # Dequeue-only test should be fast
+            ;;
         *)
             timeout_seconds=60
             ;;
@@ -793,14 +805,14 @@ run_benchmark_suite() {
     
     # Use reduced test set for quick suite or verbose mode
     if [[ "$QUICK_SUITE" == "true" ]] || [[ "$VERBOSE" == "true" ]]; then
-        local tests=("quick")
-        local process_counts=(3)
-        max_tests=2
+        local tests=("quick" "enqueue_only")
+        local process_counts=(3 1)
+        max_tests=3
         log_info "Using quick suite mode (limited tests to prevent overload)"
     else
-        # Reduced test set to prevent verbose overload
-        local tests=("quick" "throughput")
-        local process_counts=(3 4)
+        # Expanded test set including new benchmarks
+        local tests=("quick" "throughput" "enqueue_only" "dequeue_only")
+        local process_counts=(3 4 1 5)
     fi
     
     for test in "${tests[@]}"; do

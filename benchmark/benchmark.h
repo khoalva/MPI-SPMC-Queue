@@ -100,6 +100,8 @@ benchmark_config_t benchmark_config_throughput_test(int num_items);
 benchmark_config_t benchmark_config_latency_test(int num_items);
 benchmark_config_t benchmark_config_scalability_test(int num_items, int num_processes);
 benchmark_config_t benchmark_config_stress_test(int duration_sec);
+benchmark_config_t benchmark_config_enqueue_only_test(int num_items);
+benchmark_config_t benchmark_config_dequeue_only_test(int prefill_items, int num_items);
 
 /**
  * Start benchmark timing
@@ -195,5 +197,7 @@ void benchmark_cleanup(benchmark_ctx_t *ctx);
 #define BENCHMARK_LATENCY_TEST      {5000, 1, 2, 5000, 10000, 200, 45, 1, 0, "Latency Test"}
 #define BENCHMARK_SCALABILITY_TEST  {20000, 1, 8, 2000, 8000, 1000, 120, 0, 1, "Scalability Test"}
 #define BENCHMARK_STRESS_TEST       {100000, 1, 6, 500, 2000, 2000, 120, 1, 1, "Stress Test"}
+#define BENCHMARK_ENQUEUE_ONLY_TEST {10000, 1, 0, 0, 0, 0, 60, 0, 0, "Enqueue Only Test"}
+#define BENCHMARK_DEQUEUE_ONLY_TEST {10000, 0, 4, 0, 0, 0, 60, 0, 0, "Dequeue Only Test"}
 
 #endif // BENCHMARK_H
