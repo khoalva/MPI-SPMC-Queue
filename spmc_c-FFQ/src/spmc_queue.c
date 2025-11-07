@@ -85,7 +85,7 @@ int spmc_queue_init_with_queue_owner(spmc_queue_t *queue, int argc, char *argv[]
 
 // Backward compatibility: default queue owner at rank 0
 int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
-    return spmc_queue_init_with_queue_owner(queue, argc, argv, 0);
+    return spmc_queue_init_with_queue_owner(queue, argc, argv, 1);
 }
 
 /**
@@ -100,8 +100,9 @@ void spmc_queue_destroy(spmc_queue_t *queue) {
     mpi_win_destroy(&queue->win_cells);
     mpi_win_destroy(&queue->win_head);
 
-    // The producer frees the memory it allocated.
-    if (spmc_queue_is_enqueuer(queue) && queue->cells) {
+    // The queue owner frees the memory it allocated.
+    int rank = mpi_get_rank(&queue->mpi_ctx);
+    if (rank == queue->queue_owner_rank && queue->cells) {
         free(queue->cells);
         queue->cells = NULL;
     }
@@ -139,8 +140,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             int tail_val = queue->tail;
             MPI_TRY(mpi_accumulate(&tail_val, 1, MPI_INT, target_rank, gap_disp, MPI_REPLACE, &queue->win_cells));
             
-            // printf("[ENQUEUE][rank %d] Contention at pos %d. Cell rank=%d, marking gap=%d\n", 
-            //        mpi_get_rank(&queue->mpi_ctx), pos, cell_rank, queue->tail);
+            printf("[ENQUEUE][rank %d] Contention at pos %d. Cell rank=%d, marking gap=%d\n", 
+                   mpi_get_rank(&queue->mpi_ctx), pos, cell_rank, queue->tail);
             // Continue loop (Line 12: end while)
         } else {
             // Line 8: Write(cells[tail(mod N)].data, data)
@@ -153,8 +154,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             int tail_val = queue->tail;
             MPI_TRY(mpi_accumulate(&tail_val, 1, MPI_INT, target_rank, rank_disp, MPI_REPLACE, &queue->win_cells));
             
-            // printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | tail=%d\n",
-            //        mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
+            printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | tail=%d\n",
+                   mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
             
             // Line 10: success ← TRUE
             success = true;
@@ -212,8 +213,8 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
                 int empty_val = EMPTY_CELL;
                 MPI_TRY(mpi_accumulate(&empty_val, 1, MPI_INT, target_rank, rank_disp, MPI_REPLACE, &queue->win_cells));
                 
-                // printf("[DEQUEUE][rank %d] SUCCESS: Dequeued data=%d at pos=%d, rank=%d (waited %d times)\n", 
-                //        mpi_get_rank(&queue->mpi_ctx), out_data[i], pos, rank + i, wait_count);
+                printf("[DEQUEUE][rank %d] SUCCESS: Dequeued data=%d at pos=%d, rank=%d (waited %d times)\n", 
+                       mpi_get_rank(&queue->mpi_ctx), out_data[i], pos, rank + i, wait_count);
 
                 i++;
             } else if(c[i].gap >= rank + i) {
@@ -222,6 +223,8 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
                 // Line 22: wait()
                 wait_count++;
                 usleep(10);
+                // printf("[DEQUEUE][rank %d] Waiting at rank %d (cell.rank=%d, cell.gap=%d)\n",
+                //        mpi_get_rank(&queue->mpi_ctx), rank + i, c[i].rank, c[i].gap);
                 break;
             }
         }

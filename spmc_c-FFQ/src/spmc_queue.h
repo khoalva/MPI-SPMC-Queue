@@ -9,7 +9,7 @@
 #define DEQUEUED_CELL -2
 #define MAX_QUEUE_SIZE 110000
 #define BATCH_SIZE 5
-#define MAX_WAIT_COUNT 20
+#define MAX_WAIT_COUNT 10000  // Increased for remote operations
 typedef struct {
     int rank;        // Producer rank
     int gap;         // Gap for ordering

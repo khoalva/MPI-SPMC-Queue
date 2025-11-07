@@ -154,8 +154,8 @@ int spmc_queue_init_with_queue_owner(spmc_queue_t *queue, int argc, char *argv[]
         queue->q->sync_bitmap->words_per_row = (cols + 63) / 64;
     }
     
-    // Consumers (non-producer, non-queue-owner) need consumer structure
-    if (!is_producer && !is_queue_owner) {
+    // Consumers (all non-producers) need consumer structure
+    if (!is_producer) {
         queue->c = malloc(sizeof(consumer_t));
         if (!queue->c) {
             // fprintf(stderr, "Failed to allocate memory for Consumer structure.\n");
@@ -205,7 +205,7 @@ int spmc_queue_init_with_queue_owner(spmc_queue_t *queue, int argc, char *argv[]
     return MPI_SUCCESS;
 }
 
-// Backward compatibility: default queue owner at rank 0
+// Backward compatibility: default queue owner at rank 0 (local operations)
 int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
     return spmc_queue_init_with_queue_owner(queue, argc, argv, 0);
 }
@@ -361,7 +361,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         MPI_Aint sync_offset = queue->p->enq_row * words * sizeof(uint64_t);
 
         MPI_TRY(mpi_put(queue->p->map->data, words * sizeof(uint64_t), MPI_BYTE,
-                        0, sync_offset,
+                        target_rank, sync_offset,
                         &queue->q->win_sync_bitmap));
         
         // Move to next row

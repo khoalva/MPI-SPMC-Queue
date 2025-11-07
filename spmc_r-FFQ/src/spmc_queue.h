@@ -10,7 +10,7 @@
 #define MAX_QUEUE_SIZE 110000
 #define BATCH_SIZE 4
 #define MAX_DEQUEUE_RETRIES 10
-#define MAX_WAIT_COUNT 20
+#define MAX_WAIT_COUNT 10000
 typedef struct {
     mpi_context_t mpi_ctx; // MPI context for communication
 
