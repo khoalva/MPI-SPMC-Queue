@@ -39,6 +39,21 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
+    // Get MPI info for validation
+    int mpi_rank = mpi_get_rank(&queue.mpi_ctx);
+    int mpi_size = mpi_get_size(&queue.mpi_ctx);
+    
+    // Validate process count for enqueue_only test
+    if (strcmp(test_type, "enqueue_only") == 0 && mpi_size < 2) {
+        if (mpi_rank == 0) {
+            fprintf(stderr, "ERROR: enqueue_only test requires at least 2 processes!\n");
+            fprintf(stderr, "       Queue is at node 0, producers must be at nodes 1+\n");
+            fprintf(stderr, "       Usage: mpirun -np <N> %s enqueue_only (where N >= 2)\n", argv[0]);
+        }
+        spmc_queue_destroy(&queue);
+        return 1;
+    }
+    
     // Print initial information - header and common info only from enqueuer
     if (spmc_queue_is_enqueuer(&queue)) {
         printf("\\n=== SPMC Queue Benchmark Suite ===\\n");
@@ -68,6 +83,20 @@ static int run_benchmark_test(spmc_queue_t *queue, const char *test_type) {
     // Special handling for enqueue_only and dequeue_only tests
     int is_enqueue_only = (strcmp(test_type, "enqueue_only") == 0);
     int is_dequeue_only = (strcmp(test_type, "dequeue_only") == 0);
+    
+    // For enqueue_only test: Queue is at node 0, only nodes != 0 enqueue (remote operations)
+    // Override is_producer for enqueue_only test
+    if (is_enqueue_only) {
+        is_producer = (mpi_rank != 0);  // Only non-zero ranks are producers
+        if (mpi_rank == 0) {
+            printf("Rank %d: Queue owner, NOT producing in enqueue_only test (to force remote operations)\n", mpi_rank);
+        } else {
+            printf("Rank %d: Producer in enqueue_only test (remote operations to node 0)\n", mpi_rank);
+        }
+    }
+    
+    printf("Rank %d: is_producer=%d, is_enqueue_only=%d, is_dequeue_only=%d\n", 
+           mpi_rank, is_producer, is_enqueue_only, is_dequeue_only);
     
     if (benchmark_init(&bench_ctx, queue, &config, is_producer, mpi_rank, mpi_size) != 0) {
         fprintf(stderr, "Failed to initialize benchmark context\\n");
@@ -318,14 +347,16 @@ static void print_usage(const char *program_name) {
     printf("  latency      - Latency analysis with detailed timing\\n");
     printf("  scalability  - Scalability test with varying process counts\\n");
     printf("  stress       - Stress test with high load for 60 seconds\\n");
-    printf("  enqueue_only - Enqueue-only throughput test (100K items, 1 process)\\n");
+    printf("  enqueue_only - Enqueue-only throughput test (100K items, REMOTE operations)\\n");
+    printf("                 Queue at node 0, producers at nodes 1+ (requires >= 2 processes)\\n");
     printf("  dequeue_only - Dequeue-only throughput test (prefill 100K, dequeue 100K)\\n");
     printf("  help         - Show this help message\\n\\n");
     printf("Examples:\\n");
     printf("  mpirun -np 3 %s quick\\n", program_name);
     printf("  mpirun -np 4 %s throughput\\n", program_name);
     printf("  mpirun -np 6 %s scalability\\n", program_name);
-    printf("  mpirun -np 1 %s enqueue_only\\n", program_name);
+    printf("  mpirun -np 2 %s enqueue_only  # Min 2 processes for remote operations\\n", program_name);
+    printf("  mpirun -np 4 %s enqueue_only  # 3 producers (nodes 1-3) enqueuing remotely\\n", program_name);
     printf("  mpirun -np 5 %s dequeue_only\\n", program_name);
     printf("\\n");
 }

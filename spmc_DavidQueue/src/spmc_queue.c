@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
+int spmc_queue_init_with_queue_owner(spmc_queue_t *queue, int argc, char *argv[], int queue_owner_rank) {
     if (!queue) return -1;
     
     // Initialize MPI using the custom library
@@ -14,16 +14,37 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
         return -1;
     }
     
+    int rank = mpi_get_rank(&queue->mpi_ctx);
+    int size = mpi_get_size(&queue->mpi_ctx);
+    
+    // Validate queue owner rank
+    if (queue_owner_rank < 0 || queue_owner_rank >= size) {
+        if (rank == 0) {
+            fprintf(stderr, "Invalid queue owner rank %d (must be 0-%d)\n", queue_owner_rank, size-1);
+        }
+        mpi_finalize();
+        return -1;
+    }
+    
+    // Store queue owner rank
+    queue->queue_owner_rank = queue_owner_rank;
+    
     // Initialize queue metadata - CRITICAL FIX
     queue->row = 0;  // No rows completed yet
     queue->eng_row = 0;
     queue->tail = 0;
     
-    // Allocate memory using the custom library
-    queue->head = mpi_calloc(MAX_ROWS * sizeof(int), 0, mpi_get_rank(&queue->mpi_ctx));
-    queue->items = mpi_calloc(MAX_ROWS * MAX_COLS * sizeof(int), 0, mpi_get_rank(&queue->mpi_ctx));
+    // Producer is always rank 0
+    int is_producer = (rank == 0);
     
-    if (mpi_is_root(&queue->mpi_ctx)) {
+    // Queue owner is the one who allocates memory
+    int is_queue_owner = (rank == queue_owner_rank);
+    
+    // Allocate memory using the custom library - only queue owner allocates
+    queue->head = mpi_calloc(MAX_ROWS * sizeof(int), 0, is_queue_owner);
+    queue->items = mpi_calloc(MAX_ROWS * MAX_COLS * sizeof(int), 0, is_queue_owner);
+    
+    if (is_queue_owner) {
         if (!queue->head || !queue->items) {
             // fprintf(stderr, "Memory allocation failed\n");
             return -1;
@@ -46,20 +67,20 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
         
         // CRITICAL: Add memory barrier after initialization
         // printf("[INIT] Rank %d: Memory initialized, first few items: %d, %d, %d\n",
-        //        mpi_get_rank(&queue->mpi_ctx), queue->items[0], queue->items[1], queue->items[2]);
+        //        rank, queue->items[0], queue->items[1], queue->items[2]);
     }
     
     // Create MPI windows using the custom library
     MPI_TRY(mpi_win_create(queue->head, 
-                           mpi_is_root(&queue->mpi_ctx) ? MAX_ROWS * sizeof(int) : 0,
+                           is_queue_owner ? MAX_ROWS * sizeof(int) : 0,
                            sizeof(int), queue->mpi_ctx.comm, &queue->win_head));
     
     MPI_TRY(mpi_win_create(queue->items, 
-                           mpi_is_root(&queue->mpi_ctx) ? MAX_ROWS * MAX_COLS * sizeof(int) : 0,
+                           is_queue_owner ? MAX_ROWS * MAX_COLS * sizeof(int) : 0,
                            sizeof(int), queue->mpi_ctx.comm, &queue->win_items));
     
     MPI_TRY(mpi_win_create(&queue->row, 
-                           mpi_is_root(&queue->mpi_ctx) ? sizeof(int) : 0,
+                           is_queue_owner ? sizeof(int) : 0,
                            sizeof(int), queue->mpi_ctx.comm, &queue->win_row));
     
     // Lock all windows for passive target synchronization
@@ -69,10 +90,15 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
     // CRITICAL: Add a barrier to ensure all processes see the initialization
     MPI_TRY(mpi_barrier(queue->mpi_ctx.comm));
     
-    printf("SPMC Queue initialized successfully on rank %d/%d\n", 
-           mpi_get_rank(&queue->mpi_ctx), mpi_get_size(&queue->mpi_ctx));
+    printf("DavidQueue SPMC Queue initialized successfully on rank %d/%d (queue_owner=%d)\n", 
+           rank, size, queue_owner_rank);
     
     return MPI_SUCCESS;
+}
+
+// Backward compatibility: default queue owner at rank 0
+int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
+    return spmc_queue_init_with_queue_owner(queue, argc, argv, 0);
 }
 
 void spmc_queue_destroy(spmc_queue_t *queue) {
@@ -85,8 +111,9 @@ void spmc_queue_destroy(spmc_queue_t *queue) {
     mpi_win_destroy(&queue->win_items);
     mpi_win_destroy(&queue->win_row);
     
-    mpi_free(queue->head, 0, mpi_get_rank(&queue->mpi_ctx));
-    mpi_free(queue->items, 0, mpi_get_rank(&queue->mpi_ctx));
+    int my_rank = mpi_get_rank(&queue->mpi_ctx);
+    mpi_free(queue->head, queue->queue_owner_rank, my_rank);
+    mpi_free(queue->items, queue->queue_owner_rank, my_rank);
     
     mpi_finalize();
     
@@ -101,6 +128,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         return -1;
     }
     
+    int target_rank = queue->queue_owner_rank;
     int val;
     size_t element_offset = (queue->eng_row * MAX_COLS + queue->tail);
     size_t byte_offset = element_offset * sizeof(int);
@@ -115,7 +143,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     //        mpi_get_rank(&queue->mpi_ctx), element_offset, byte_offset, queue->eng_row, queue->tail);
 
     // AtomicSwap: MPI_Fetch_and_op with MPI_REPLACE
-    MPI_TRY(mpi_fetch_and_op(&value, &val, MPI_INT, 0, byte_offset, MPI_REPLACE, &queue->win_items));
+    MPI_TRY(mpi_fetch_and_op(&value, &val, MPI_INT, target_rank, byte_offset, MPI_REPLACE, &queue->win_items));
     
     // printf("[ENQ_SWAP_RESULT] Rank %d: Swap returned original value: %d\n",
     //        mpi_get_rank(&queue->mpi_ctx), val);
@@ -144,11 +172,11 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         //        mpi_get_rank(&queue->mpi_ctx), new_element_offset, new_byte_offset, queue->eng_row, queue->tail);
 
         int dummy_val;
-        MPI_TRY(mpi_fetch_and_op(&value, &dummy_val, MPI_INT, 0, new_byte_offset, MPI_REPLACE, &queue->win_items));
+        MPI_TRY(mpi_fetch_and_op(&value, &dummy_val, MPI_INT, target_rank, new_byte_offset, MPI_REPLACE, &queue->win_items));
 
 
         // AtomicWrite ROW: MPI_Accumulate with MPI_REPLACE
-        MPI_TRY(mpi_accumulate(&queue->eng_row, 1, MPI_INT, 0, 0, MPI_REPLACE, &queue->win_row));
+        MPI_TRY(mpi_accumulate(&queue->eng_row, 1, MPI_INT, target_rank, 0, MPI_REPLACE, &queue->win_row));
 ;
 
         // printf("Rank %d announced completed row %d after enqueuing: %d at (row: %d, col: %d)\n", 
@@ -166,12 +194,13 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
 int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     if (spmc_queue_is_enqueuer(queue) || !out_data || max_count <= 0) return 0;
     
+    int target_rank = queue->queue_owner_rank;
     // DavidQueue only supports single dequeue
     int deq_row, head, val;
     
     // Step 1: AtomicRead ROW - MPI_Fetch_and_op with MPI_NO_OP
     int zero = 0;
-    MPI_TRY(mpi_fetch_and_op(&zero, &deq_row, MPI_INT, 0, 0, MPI_NO_OP, &queue->win_row));
+    MPI_TRY(mpi_fetch_and_op(&zero, &deq_row, MPI_INT, target_rank, 0, MPI_NO_OP, &queue->win_row));
     
     // Check if there's actually a completed row available
     if (deq_row < 0) {
@@ -194,7 +223,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     // printf("[DEQ_OFFSET_DEBUG] Rank %d: Head element offset = %zu, byte offset = %zu for deq_row %d\n",
     //        mpi_get_rank(&queue->mpi_ctx), head_element_offset, head_byte_offset, deq_row);
 
-    MPI_TRY(mpi_fetch_and_op(&one, &head, MPI_INT, 0, head_byte_offset, MPI_SUM, &queue->win_head));
+    MPI_TRY(mpi_fetch_and_op(&one, &head, MPI_INT, target_rank, head_byte_offset, MPI_SUM, &queue->win_head));
 
     // Step 3: AtomicSwap ITEMS[deq_row, head] with T - MPI_Fetch_and_op with MPI_REPLACE
     int t_value = T; 
@@ -210,7 +239,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     // printf("[DEQ_OFFSET_DEBUG] Rank %d: Items element offset = %zu, byte offset = %zu for (row:%d, col:%d)\n",
     //        mpi_get_rank(&queue->mpi_ctx), items_element_offset, items_byte_offset, deq_row, head);
 
-    MPI_TRY(mpi_fetch_and_op(&t_value, &val, MPI_INT, 0, items_byte_offset, MPI_REPLACE, &queue->win_items));
+    MPI_TRY(mpi_fetch_and_op(&t_value, &val, MPI_INT, target_rank, items_byte_offset, MPI_REPLACE, &queue->win_items));
     // MPI_TRY(mpi_win_flush(0, &queue->win_items));
     
     // Step 4: Check what we got

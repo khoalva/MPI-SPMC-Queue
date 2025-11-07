@@ -21,6 +21,8 @@ typedef struct {
     int tail;
     int size;
     
+    int queue_owner_rank; // Rank where queue memory is allocated (default: 0)
+    
     mpi_window_t win_ranks;
     mpi_window_t win_gaps;
     mpi_window_t win_datas;
@@ -30,6 +32,7 @@ typedef struct {
 
 // Bắt buộc cho benchmark chung
 int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]);
+int spmc_queue_init_with_queue_owner(spmc_queue_t *queue, int argc, char *argv[], int queue_owner_rank);
 void spmc_queue_destroy(spmc_queue_t *queue);
 int spmc_queue_enqueue(spmc_queue_t *queue, int value);
 int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count);

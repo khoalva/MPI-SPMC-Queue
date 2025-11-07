@@ -60,11 +60,14 @@ typedef struct spmc_queue {
     producer_t* p;
     consumer_t* c;
     structure_t* q;
+    
+    int queue_owner_rank; // Rank where queue memory is allocated (default: 0)
 
 } spmc_queue_t;
 
 // Must have for benchmark compatibility
 int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]);
+int spmc_queue_init_with_queue_owner(spmc_queue_t *queue, int argc, char *argv[], int queue_owner_rank);
 void spmc_queue_destroy(spmc_queue_t *queue);
 int spmc_queue_enqueue(spmc_queue_t *queue, int value);
 int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count);

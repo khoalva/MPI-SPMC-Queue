@@ -197,6 +197,8 @@ void benchmark_cleanup(benchmark_ctx_t *ctx);
 #define BENCHMARK_LATENCY_TEST      {5000, 1, 2, 5000, 10000, 200, 45, 1, 0, "Latency Test"}
 #define BENCHMARK_SCALABILITY_TEST  {20000, 1, 8, 2000, 8000, 1000, 120, 0, 1, "Scalability Test"}
 #define BENCHMARK_STRESS_TEST       {100000, 1, 6, 500, 2000, 2000, 120, 1, 1, "Stress Test"}
+// ENQUEUE_ONLY: Queue at node 0, all other nodes are producers (remote operations)
+// Requires at least 2 processes: node 0 has queue, nodes 1+ are producers
 #define BENCHMARK_ENQUEUE_ONLY_TEST {10000, 1, 0, 0, 0, 0, 60, 0, 0, "Enqueue Only Test"}
 #define BENCHMARK_DEQUEUE_ONLY_TEST {10000, 0, 4, 0, 0, 0, 60, 0, 0, "Dequeue Only Test"}
 

@@ -57,7 +57,7 @@ print_usage() {
     echo "  latency     - Latency analysis (recommended: -p 3)"
     echo "  scalability - Scalability testing (recommended: -p 9)"
     echo "  stress      - Stress testing (recommended: -p 7 = 1 producer + 6 consumers)"
-    echo "  enqueue_only - Enqueue-only throughput test (recommended: -p 1)"
+    echo "  enqueue_only - Enqueue-only REMOTE throughput test (recommended: -p 2+, queue at node 0)"
     echo "  dequeue_only - Dequeue-only throughput test with prefill (recommended: -p 5)"
     echo "  suite       - Run complete benchmark suite"
     echo "  all         - Same as suite"
@@ -80,7 +80,8 @@ print_usage() {
     echo "  $0 quick"
     echo "  $0 throughput -p 4"
     echo "  $0 stress -p 7  # Important: Use 7 processes for stress test!"
-    echo "  $0 enqueue_only -p 1  # Enqueue-only test with single producer"
+    echo "  $0 enqueue_only -p 2  # Min 2 processes: queue at node 0, producer at node 1+"
+    echo "  $0 enqueue_only -p 4  # 3 remote producers (nodes 1-3) enqueuing to queue at node 0"
     echo "  $0 dequeue_only -p 5  # Dequeue-only test with 4 consumers (1 prefiller + 4 consumers)"
     echo "  $0 throughput -p 4 -s ../spmc_2004"
     echo "  $0 throughput -p 8 -H MPI-node1,MPI-node2,MPI-node3,MPI-node4"
@@ -94,7 +95,7 @@ print_usage() {
     echo "  - Latency: 3 processes (1 producer + 2 consumers)"
     echo "  - Scalability: 9 processes (1 producer + 8 consumers)"
     echo "  - Stress: 7 processes (1 producer + 6 consumers)"
-    echo "  - Enqueue Only: 1 process (single producer)"
+    echo "  - Enqueue Only: >=2 processes (queue at node 0, producers at nodes 1+, REMOTE ops)"
     echo "  - Dequeue Only: 5 processes (1 prefiller + 4 consumers)"
     echo ""
 }
@@ -562,6 +563,13 @@ run_benchmark() {
     local spmc_name=$(basename "$spmc_path")
     local timestamp=$(date +"%Y%m%d_%H%M%S")
     local log_file="${LOG_DIR}/benchmark_${test_type}_${spmc_name}_${num_procs}procs_${timestamp}.log"
+
+    # Validate process count for specific tests
+    if [[ "$test_type" == "enqueue_only" ]] && [[ $num_procs -lt 2 ]]; then
+        log_error "enqueue_only test requires at least 2 processes (queue at node 0, producers at nodes 1+)"
+        log_error "Usage: $0 enqueue_only -p <N> (where N >= 2)"
+        return 1
+    fi
 
     # Determine timeout based on test type
     local timeout_seconds=60

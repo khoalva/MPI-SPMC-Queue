@@ -17,6 +17,8 @@ A comprehensive performance benchmarking library for Single Producer Multiple Co
 - **Latency Test**: Detailed timing analysis with microsecond precision (1 producer, 2 consumers, 45s timeout)
 - **Scalability Test**: Performance scaling from 2-8 processes (1 producer, 8 consumers, 120s timeout)
 - **Stress Test**: Extended duration testing under high load (1 producer, 6 consumers, 300s duration)
+- **Enqueue Only Test**: Remote enqueue throughput (queue at node 0, producers at nodes 1+, requires ≥2 processes)
+- **Dequeue Only Test**: Dequeue throughput with prefill (1 prefiller + 4 consumers, 5 processes)
 
 **Note**: When running benchmarks, ensure your `-np` value matches the total of producers + consumers for each test type.
 
@@ -71,11 +73,20 @@ mpirun -np 6 ./examples/spmc_benchmark scalability
 # Note: Total processes = num_producers + num_consumers
 # Stress test default config: 1 producer, 6 consumers, 300s duration
 mpirun -np 7 ./examples/spmc_benchmark stress
+
+# Enqueue-only test (REMOTE operations)
+# Queue at node 0, producers at nodes 1+
+mpirun -np 2 ./examples/spmc_benchmark enqueue_only  # 1 producer (remote)
+mpirun -np 4 ./examples/spmc_benchmark enqueue_only  # 3 producers (all remote)
+
+# Dequeue-only test with prefill
+mpirun -np 5 ./examples/spmc_benchmark dequeue_only  # 1 prefiller + 4 consumers
 ```
 
 **Important Note on Process Count:**
 - The configuration defines `num_producers` and `num_consumers` (e.g., stress test: 1 + 6)
 - You must run with total processes = num_producers + num_consumers
+- **Enqueue Only Test**: Requires ≥2 processes (node 0 has queue, nodes 1+ are producers for remote ops)
 - Example: For stress test (1 producer + 6 consumers), use `-np 7`
 - The first process becomes the producer, remaining processes become consumers
 

@@ -20,7 +20,7 @@ static inline void print_timing(const char* operation, double start_time, int ra
 }
 
 
-int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
+int spmc_queue_init_with_queue_owner(spmc_queue_t *queue, int argc, char *argv[], int queue_owner_rank){
     if (!queue) return -1;
 
     // Initialize MPI context
@@ -34,7 +34,24 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
 
     int rank = mpi_get_rank(&queue->mpi_ctx);
     int size = mpi_get_size(&queue->mpi_ctx);
+    
+    // Validate queue owner rank
+    if (queue_owner_rank < 0 || queue_owner_rank >= size) {
+        if (rank == 0) {
+            fprintf(stderr, "Invalid queue owner rank %d (must be 0-%d)\n", queue_owner_rank, size-1);
+        }
+        mpi_finalize();
+        return -1;
+    }
+    
+    // Store queue owner rank in queue structure
+    queue->queue_owner_rank = queue_owner_rank;
+    
+    // Producer is always rank 0
     int is_producer = (rank == 0);
+    
+    // Queue owner is the one who allocates memory
+    int is_queue_owner = (rank == queue_owner_rank);
 
     // Initialize pointers to NULL
     queue->p = NULL;
@@ -52,6 +69,7 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
     int rows = MAX_ROW;  
     int cols = MAX_QUEUE_SIZE;
 
+    // Producer (rank 0) always has producer structure
     if (is_producer) {
         
            // Initialize Producer structure
@@ -62,6 +80,19 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
             mpi_finalize();
             return -1;
         }
+
+        // Initialize producer-specific fields
+        queue->p->tail = 0;
+        queue->p->enq_row = 0;
+        queue->p->size = MAX_QUEUE_SIZE;
+        
+        queue->p->map = malloc(sizeof(bitmap_t));
+        bitmap_init(queue->p->map, 1, cols);
+        set_all_bits_full(queue->p->map);
+    }
+
+    // Queue owner allocates the actual queue memory
+    if (is_queue_owner) {
 
         // Initialize items array
         queue->q->items = malloc(MAX_QUEUE_SIZE * sizeof(cell_t));
@@ -90,24 +121,12 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
             queue->q->heads[i] = 0;
         }
 
-        // Initialize producer-specific fields
-        queue->p->tail = 0;
-        queue->p->enq_row = 0;
-        queue->p->size = MAX_QUEUE_SIZE;
-        
-        queue->p->map = malloc(sizeof(bitmap_t));
+        // Initialize bitmap structures
         queue->q->bitmap = malloc(sizeof(bitmap_t));
         queue->q->sync_bitmap = malloc(sizeof(bitmap_t));
 
-        bitmap_init(queue->p->map, 1, cols);
         bitmap_init(queue->q->bitmap, rows, cols);
         bitmap_init(queue->q->sync_bitmap, rows, cols);
-        
-        // Initialize sync_bitmap with all 1s as per algorithm: [1,1,1,1,...]
-        // set_all_bits(queue->q->bitmap, 0);
-        
-        // Initialize producer map with all 1s
-        set_all_bits_full(queue->p->map);
 
         // Initialize Structure fields
         queue->q->row = 0;
@@ -115,26 +134,12 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
         // queue->q->cols = cols;
 
     } else {
-        // Initialize Consumer structure  
-        queue->c = malloc(sizeof(consumer_t));
-        if (!queue->c) {
-            // fprintf(stderr, "Failed to allocate memory for Consumer structure.\n");
-            free(queue->q);
-            mpi_finalize();
-            return -1;
-        }
-        // Consumers don't allocate main memory
+        // Non-queue-owner nodes don't allocate main memory
         queue->q->items = NULL;
         queue->q->heads = NULL;
         queue->q->row = 0;
         // queue->q->rows = rows;
         // queue->q->cols = cols;
-        queue->c->size = MAX_QUEUE_SIZE;
-        queue->c->last_value = T;
-        queue->c->last_deq_row = 0;
-        // Initialize optimization variables
-        queue->c->last_index = -1;
-        queue->c->last_N = -1;
         
         // Consumer needs bitmap structures for window creation (but no data)
         queue->q->bitmap = malloc(sizeof(bitmap_t));
@@ -147,6 +152,23 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
         queue->q->sync_bitmap->rows = rows;
         queue->q->sync_bitmap->cols = cols;
         queue->q->sync_bitmap->words_per_row = (cols + 63) / 64;
+    }
+    
+    // Consumers (non-producer, non-queue-owner) need consumer structure
+    if (!is_producer && !is_queue_owner) {
+        queue->c = malloc(sizeof(consumer_t));
+        if (!queue->c) {
+            // fprintf(stderr, "Failed to allocate memory for Consumer structure.\n");
+            free(queue->q);
+            mpi_finalize();
+            return -1;
+        }
+        queue->c->size = MAX_QUEUE_SIZE;
+        queue->c->last_value = T;
+        queue->c->last_deq_row = 0;
+        // Initialize optimization variables
+        queue->c->last_index = -1;
+        queue->c->last_N = -1;
         
         queue->c->map = malloc(sizeof(bitmap_t));
         bitmap_init(queue->c->map, 1, cols);
@@ -154,10 +176,11 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
     }
 
     // Create MPI windows for one-sided access
-    size_t items_size = is_producer ? MAX_QUEUE_SIZE * sizeof(cell_t) : 0;
-    size_t heads_size = is_producer ? (size - 1) * sizeof(int) : 0;
-    size_t row_size = is_producer ? sizeof(int) : 0;
-    size_t bitmap_size = is_producer ? (MPI_Aint)queue->q->bitmap->rows * queue->q->bitmap->words_per_row * sizeof(uint64_t) : 0;
+    // Only queue owner allocates memory for windows
+    size_t items_size = is_queue_owner ? MAX_QUEUE_SIZE * sizeof(cell_t) : 0;
+    size_t heads_size = is_queue_owner ? (size - 1) * sizeof(int) : 0;
+    size_t row_size = is_queue_owner ? sizeof(int) : 0;
+    size_t bitmap_size = is_queue_owner ? (MPI_Aint)queue->q->bitmap->rows * queue->q->bitmap->words_per_row * sizeof(uint64_t) : 0;
 
 
     MPI_TRY(mpi_win_create(queue->q->items, items_size, sizeof(cell_t), 
@@ -180,6 +203,11 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]){
     // printf("GWMQ SPMC Queue initialized on rank %d/%d\n", rank, size);
 
     return MPI_SUCCESS;
+}
+
+// Backward compatibility: default queue owner at rank 0
+int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
+    return spmc_queue_init_with_queue_owner(queue, argc, argv, 0);
 }
 
 
@@ -311,7 +339,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     cell_t old_cell;
     MPI_Aint offset = queue->p->tail * sizeof(cell_t);
     
-    MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell, MPI_UINT64_T, 0, offset, 
+    int target_rank = queue->queue_owner_rank;  // Target the queue owner
+    MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell, MPI_UINT64_T, target_rank, offset, 
                              MPI_REPLACE, &queue->q->win_items));
     
 
@@ -354,14 +383,14 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         cell_t old_cell_retry;
         MPI_Aint offset = queue->p->tail * sizeof(cell_t);
 
-        MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell_retry, MPI_UINT64_T, 0, offset, 
+        MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell_retry, MPI_UINT64_T, target_rank, offset, 
                              MPI_REPLACE, &queue->q->win_items));
         
         // printf("[Rank %d][ENQUEUE] (2nd try) Swapped at tail %d (row %d), old_cell: {data=%d, gen=%d}, new_cell: {data=%d, gen=%d}\n", 
         //    rank, queue->p->tail, queue->p->enq_row, GET_DATA(old_cell_retry), GET_GEN(old_cell_retry), GET_DATA(new_cell), GET_GEN(new_cell));
         
         // MPI_Accumulate + MPI_REPLACE (atomic write): WRITE(ROW, enq_row)
-        MPI_TRY(mpi_accumulate(&queue->p->enq_row, 1, MPI_INT, 0, 0,
+        MPI_TRY(mpi_accumulate(&queue->p->enq_row, 1, MPI_INT, target_rank, 0,
                               MPI_REPLACE, &queue->q->win_row));
     }
     
@@ -379,6 +408,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     // BBQ only supports single dequeue
     int rank = mpi_get_rank(&queue->mpi_ctx);
     int consumer_idx = rank - 1;  // Consumer index (0-based)
+    int target_rank = queue->queue_owner_rank;  // Target the queue owner
     
     // double dequeue_start = get_time_us();
     
@@ -390,7 +420,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     int deq_row;
     int zero = 0;
 
-    MPI_TRY(mpi_fetch_and_op(&zero, &deq_row, MPI_INT, 0, 0, 
+    MPI_TRY(mpi_fetch_and_op(&zero, &deq_row, MPI_INT, target_rank, 0, 
                              MPI_NO_OP, &queue->q->win_row));
 
     // print_timing("READ_ROW", read_row_start, rank);
@@ -408,7 +438,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
         MPI_Aint offset = (deq_row - 1) * words * sizeof(uint64_t);
         
         MPI_TRY(mpi_get(queue->c->map->data, words * sizeof(uint64_t), MPI_BYTE,
-                        0, offset,
+                        target_rank, offset,
                         &queue->q->win_sync_bitmap));
         
         // print_timing("SYNC_BITMAP_READ", sync_bitmap_start, rank);
@@ -435,7 +465,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     
     // printf("[Rank %d][DEQUEUE] About to fetch_and_add HEADS at offset %ld...\n", rank, (long)head_offset);
     fflush(stdout);
-    MPI_TRY(mpi_fetch_and_op(&one, &head, MPI_INT, 0, head_offset,
+    MPI_TRY(mpi_fetch_and_op(&one, &head, MPI_INT, target_rank, head_offset,
                              MPI_SUM, &queue->q->win_heads));
     // printf("[Rank %d][DEQUEUE] Fetched HEAD = %d\n", rank, head);
     fflush(stdout);
@@ -474,7 +504,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     cell_t old_cell;
     MPI_Aint offset = index * sizeof(cell_t);
     
-    MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell, MPI_UINT64_T, 0, offset, 
+    MPI_TRY(mpi_fetch_and_op(&new_cell, &old_cell, MPI_UINT64_T, target_rank, offset, 
                              MPI_REPLACE, &queue->q->win_items));
     // print_timing("ATOMIC_SWAP", swap_start, rank);
     
@@ -490,7 +520,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     uint64_t bit_mask = (1ULL << bit_offset);
     MPI_Aint bitmap_offset = (deq_row * queue->q->bitmap->words_per_row + word_index) * sizeof(uint64_t);
     
-    MPI_TRY(mpi_accumulate(&bit_mask, 1, MPI_UINT64_T, 0, bitmap_offset,
+    MPI_TRY(mpi_accumulate(&bit_mask, 1, MPI_UINT64_T, target_rank, bitmap_offset,
                           MPI_BOR, &queue->q->win_bitmap));
     // print_timing("BITMAP_MARK", bitmap_mark_start, rank);
     
@@ -533,6 +563,7 @@ void spmc_queue_print_stats(spmc_queue_t *queue) {
 
 int spmc_queue_is_enqueuer(spmc_queue_t *queue) {
     if (!queue) return 0;
+    // Producer is always rank 0
     return (mpi_get_rank(&queue->mpi_ctx) == 0);
 }
 

@@ -9,9 +9,9 @@
 #include <time.h>
 
 /**
- * @brief Initializes the SPMC queue and necessary MPI resources.
+ * @brief Initializes the SPMC queue and necessary MPI resources with configurable queue owner.
  */
-int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
+int spmc_queue_init_with_queue_owner(spmc_queue_t *queue, int argc, char *argv[], int queue_owner_rank) {
     if (!queue) return -1;
 
     MPI_TRY(mpi_init(argc, argv, &queue->mpi_ctx));
@@ -22,11 +22,30 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
         return -1;
     }
 
+    int rank = mpi_get_rank(&queue->mpi_ctx);
+    int size = mpi_get_size(&queue->mpi_ctx);
+    
+    // Validate queue owner rank
+    if (queue_owner_rank < 0 || queue_owner_rank >= size) {
+        if (rank == 0) {
+            fprintf(stderr, "Invalid queue owner rank %d (must be 0-%d)\n", queue_owner_rank, size-1);
+        }
+        mpi_finalize();
+        return -1;
+    }
+    
+    // Store queue owner rank
+    queue->queue_owner_rank = queue_owner_rank;
     queue->size = MAX_QUEUE_SIZE;
-    int is_producer = (mpi_get_rank(&queue->mpi_ctx) == 0);
+    
+    // Producer is always rank 0
+    int is_producer = (rank == 0);
+    
+    // Queue owner is the one who allocates memory
+    int is_queue_owner = (rank == queue_owner_rank);
 
-    // Only the producer (rank 0) allocates and initializes the queue memory.
-    if (is_producer) {
+    // Only the queue owner allocates and initializes the queue memory.
+    if (is_queue_owner) {
         queue->cells = malloc(queue->size * sizeof(spmc_cell_t));
         if (!queue->cells) {
             // fprintf(stderr, "Failed to allocate memory for queue cells.\n");
@@ -41,15 +60,15 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
             queue->cells[i].data = 0;
         }
     } else {
-        // Consumers do not allocate the main memory.
+        // Non-queue-owner nodes do not allocate the main memory.
         queue->cells = NULL;
         queue->head = 0;
         queue->tail = 0;
     }
 
-    // Create MPI windows for one-sided access. The size is 0 for consumers.
-    size_t cells_size = is_producer ? queue->size * sizeof(spmc_cell_t) : 0;
-    size_t head_size = is_producer ? sizeof(int) : 0;
+    // Create MPI windows for one-sided access. The size is 0 for non-queue-owner.
+    size_t cells_size = is_queue_owner ? queue->size * sizeof(spmc_cell_t) : 0;
+    size_t head_size = is_queue_owner ? sizeof(int) : 0;
     MPI_TRY(mpi_win_create(queue->cells, cells_size, 1, queue->mpi_ctx.comm, &queue->win_cells));
     MPI_TRY(mpi_win_create(&queue->head, head_size, sizeof(int), queue->mpi_ctx.comm, &queue->win_head));
 
@@ -58,10 +77,15 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
     mpi_window_t windows[] = {queue->win_cells, queue->win_head};
     MPI_TRY(mpi_win_lock_all_multiple(windows, 2));
 
-    printf("SPMC Queue initialized on rank %d/%d\n",
-           mpi_get_rank(&queue->mpi_ctx), mpi_get_size(&queue->mpi_ctx));
+    printf("SPMC Queue initialized on rank %d/%d (queue_owner=%d)\n",
+           rank, size, queue_owner_rank);
 
     return MPI_SUCCESS;
+}
+
+// Backward compatibility: default queue owner at rank 0
+int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
+    return spmc_queue_init_with_queue_owner(queue, argc, argv, 0);
 }
 
 /**
@@ -93,6 +117,7 @@ void spmc_queue_destroy(spmc_queue_t *queue) {
 int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     if (!spmc_queue_is_enqueuer(queue)) return -1;
     
+    int target_rank = queue->queue_owner_rank;  // Target the queue owner
     bool success = false;
     
     // Line 3: while ¬success do
@@ -104,7 +129,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         // AtomicRead: MPI_Fetch_and_op with MPI_NO_OP
         int cell_rank;
         int no_op_val = 0;
-        MPI_TRY(mpi_fetch_and_op(&no_op_val, &cell_rank, MPI_INT, 0, rank_disp, MPI_NO_OP, &queue->win_cells));
+        MPI_TRY(mpi_fetch_and_op(&no_op_val, &cell_rank, MPI_INT, target_rank, rank_disp, MPI_NO_OP, &queue->win_cells));
         
         // Line 5: if rank ≥ 0 then
         if (cell_rank >= 0) {
@@ -112,7 +137,7 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             // AtomicWrite: MPI_Accumulate with MPI_REPLACE
             MPI_Aint gap_disp = pos * sizeof(spmc_cell_t) + offsetof(spmc_cell_t, gap);
             int tail_val = queue->tail;
-            MPI_TRY(mpi_accumulate(&tail_val, 1, MPI_INT, 0, gap_disp, MPI_REPLACE, &queue->win_cells));
+            MPI_TRY(mpi_accumulate(&tail_val, 1, MPI_INT, target_rank, gap_disp, MPI_REPLACE, &queue->win_cells));
             
             // printf("[ENQUEUE][rank %d] Contention at pos %d. Cell rank=%d, marking gap=%d\n", 
             //        mpi_get_rank(&queue->mpi_ctx), pos, cell_rank, queue->tail);
@@ -121,12 +146,12 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             // Line 8: Write(cells[tail(mod N)].data, data)
             // Write: MPI_Put (non-atomic)
             MPI_Aint data_disp = pos * sizeof(spmc_cell_t) + offsetof(spmc_cell_t, data);
-            MPI_TRY(mpi_put(&value, sizeof(int), MPI_BYTE, 0, data_disp, &queue->win_cells));
+            MPI_TRY(mpi_put(&value, sizeof(int), MPI_BYTE, target_rank, data_disp, &queue->win_cells));
             
             // Line 9: AtomicWrite(cells[tail(mod N)].rank, tail)
             // AtomicWrite: MPI_Accumulate with MPI_REPLACE
             int tail_val = queue->tail;
-            MPI_TRY(mpi_accumulate(&tail_val, 1, MPI_INT, 0, rank_disp, MPI_REPLACE, &queue->win_cells));
+            MPI_TRY(mpi_accumulate(&tail_val, 1, MPI_INT, target_rank, rank_disp, MPI_REPLACE, &queue->win_cells));
             
             // printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | tail=%d\n",
             //        mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
@@ -149,12 +174,13 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
 int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     if (!out_data || max_count <= 0) return 0;
     
+    int target_rank = queue->queue_owner_rank;  // Target the queue owner
     int rank;
     bool success = false;
     int retry_count = 0;
     int wait_count = 0;
     // Line 2: rank ← FetchInc(head)
-    MPI_TRY(mpi_fetch_and_op(&max_count, &rank, MPI_INT, 0, 0, MPI_SUM, &queue->win_head));
+    MPI_TRY(mpi_fetch_and_op(&max_count, &rank, MPI_INT, target_rank, 0, MPI_SUM, &queue->win_head));
     
     retry_count++;
     
@@ -170,7 +196,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
         MPI_Aint disp = pos * sizeof(spmc_cell_t);
         MPI_TRY(mpi_get_accumulate(&no_op_val, 3 * max_count, MPI_INT,
                                     c, 3 * max_count, MPI_INT,
-                                    0, disp, 3 * max_count, MPI_INT,
+                                    target_rank, disp, 3 * max_count, MPI_INT,
                                     MPI_NO_OP, &queue->win_cells));
         while(i < max_count) {
             
@@ -184,7 +210,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
                 MPI_Aint disp = pos * sizeof(spmc_cell_t);
                 MPI_Aint rank_disp = disp + offsetof(spmc_cell_t, rank);
                 int empty_val = EMPTY_CELL;
-                MPI_TRY(mpi_accumulate(&empty_val, 1, MPI_INT, 0, rank_disp, MPI_REPLACE, &queue->win_cells));
+                MPI_TRY(mpi_accumulate(&empty_val, 1, MPI_INT, target_rank, rank_disp, MPI_REPLACE, &queue->win_cells));
                 
                 // printf("[DEQUEUE][rank %d] SUCCESS: Dequeued data=%d at pos=%d, rank=%d (waited %d times)\n", 
                 //        mpi_get_rank(&queue->mpi_ctx), out_data[i], pos, rank + i, wait_count);
