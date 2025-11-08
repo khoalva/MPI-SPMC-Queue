@@ -180,8 +180,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     int target_rank = queue->queue_owner_rank;  // Target the queue owner
     bool success = false;
     
-    printf("[ENQUEUE] Rank %d: Starting enqueue value=%d, target_rank=%d, tail=%d\n", 
-           mpi_get_rank(&queue->mpi_ctx), value, target_rank, queue->tail);
+    // printf("[ENQUEUE] Rank %d: Starting enqueue value=%d, target_rank=%d, tail=%d\n", 
+    //        mpi_get_rank(&queue->mpi_ctx), value, target_rank, queue->tail);
     
     // Line 3: while ¬success do
     while (!success) {
@@ -194,8 +194,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
         int no_op_val = 0;
         MPI_TRY(mpi_fetch_and_op(&no_op_val, &cell_rank, MPI_INT, target_rank, rank_disp, MPI_NO_OP, &queue->win_ranks));
         
-        printf("[ENQUEUE] Rank %d: pos=%d, cell_rank=%d\n", 
-               mpi_get_rank(&queue->mpi_ctx), pos, cell_rank);
+        // printf("[ENQUEUE] Rank %d: pos=%d, cell_rank=%d\n", 
+        //        mpi_get_rank(&queue->mpi_ctx), pos, cell_rank);
         
         // Line 5: if rank ≥ 0 then
         if (cell_rank >= 0) {
@@ -205,8 +205,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             int tail_val = queue->tail;
             MPI_TRY(mpi_accumulate(&tail_val, 1, MPI_INT, target_rank, gap_disp, MPI_REPLACE, &queue->win_gaps));
             
-            printf("[ENQUEUE] Rank %d: Contention at pos %d. Cell rank=%d, marking gap=%d\n", 
-                   mpi_get_rank(&queue->mpi_ctx), pos, cell_rank, queue->tail);
+         // printf("[ENQUEUE] Rank %d: Contention at pos %d. Cell rank=%d, marking gap=%d\n", 
+         //        mpi_get_rank(&queue->mpi_ctx), pos, cell_rank, queue->tail);
             // Continue loop (Line 12: end while)
         } else {
             // Line 8: Write(cells[tail(mod N)].data, data)
@@ -219,8 +219,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             int tail_val = queue->tail;
             MPI_TRY(mpi_accumulate(&tail_val, 1, MPI_INT, target_rank, rank_disp, MPI_REPLACE, &queue->win_ranks));
             
-            printf("[ENQUEUE] Rank %d: Enqueued item: %d at pos %d | tail=%d\n",
-                   mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
+         // printf("[ENQUEUE] Rank %d: Enqueued item: %d at pos %d | tail=%d\n",
+         //        mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
             
             // Line 10: success ← TRUE
             success = true;
@@ -230,14 +230,14 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     // Line 13: tail ← tail + 1
     queue->tail++;
     
-    printf("[ENQUEUE] Rank %d: Completed enqueue, new tail=%d\n", 
-           mpi_get_rank(&queue->mpi_ctx), queue->tail);
+    // printf("[ENQUEUE] Rank %d: Completed enqueue, new tail=%d\n", 
+    //        mpi_get_rank(&queue->mpi_ctx), queue->tail);
     
     return MPI_SUCCESS;
 }
 
 /**
- * @brief Dequeues an item using FFQ logic (refactored version).
+ * @brief Dequeues an item using FFQ logic (following pseudocode exactly).
  * @return Number of items dequeued.
  */
 int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
@@ -246,18 +246,11 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     int target_rank = queue->queue_owner_rank;  // Target the queue owner
     int rank;
     int retry_count = 0;
-    int wait_count = 0;
     
-    printf("[DEQUEUE] Rank %d: Starting dequeue, target_rank=%d, max_count=%d\n",
-           mpi_get_rank(&queue->mpi_ctx), target_rank, max_count);
+    // printf("[DEQUEUE] Rank %d: Starting dequeue, target_rank=%d, max_count=%d\n",
+    //        mpi_get_rank(&queue->mpi_ctx), target_rank, max_count);
     
-    // Line 1: rank ← FetchInc(head, k)
-    MPI_TRY(mpi_fetch_and_op(&max_count, &rank, MPI_INT, target_rank, 0, MPI_SUM, &queue->win_head));
-    
-    printf("[DEQUEUE] Rank %d: Got rank=%d from FetchInc(head, %d)\n",
-           mpi_get_rank(&queue->mpi_ctx), rank, max_count);
-    
-    // Allocate buffers for batch read
+    // Allocate buffers for batch read (reused across iterations)
     int *ranks_buf = malloc(max_count * sizeof(int));
     int *gaps_buf = malloc(max_count * sizeof(int));
     int *datas_buf = malloc(max_count * sizeof(int));
@@ -268,7 +261,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
         return 0;  // Failed to allocate, return 0 items dequeued
     }
     
-    // Line 2: pending ← [0, 1, ..., k-1], skipped ← []
+    // Allocate state arrays (reused across iterations)
     bool *pending = malloc(max_count * sizeof(bool));
     bool *skipped = malloc(max_count * sizeof(bool));
     bool *ready = malloc(max_count * sizeof(bool));
@@ -282,102 +275,65 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
         return 0;
     }
     
-    for (int i = 0; i < max_count; i++) {
-        pending[i] = true;
-        skipped[i] = false;
-        ready[i] = false;
-    }
-    
     int no_op_val = 0;
-    int pos = rank % queue->size;
-    MPI_Aint disp = pos * sizeof(int);
     
-    printf("[DEQUEUE] Rank %d: pos=%d, disp=%ld\n",
-           mpi_get_rank(&queue->mpi_ctx), pos, disp);
+    // Line 2: rank ← FetchInc(head, k)
+    MPI_TRY(mpi_fetch_and_op(&max_count, &rank, MPI_INT, target_rank, 0, MPI_SUM, &queue->win_head));
+    
+    // printf("[DEQUEUE] Rank %d: Got rank=%d from FetchInc(head, %d)\n",
+    //        mpi_get_rank(&queue->mpi_ctx), rank, max_count);
     
     // Line 3: while TRUE do
-    while (retry_count < MAX_DEQUEUE_RETRIES && wait_count < MAX_WAIT_COUNT) {
+    while (retry_count < MAX_DEQUEUE_RETRIES) {
         retry_count++;
+        int wait_count = 0;  // Track consecutive waits (similar to r-FFQ)
+        bool timeout_occurred = false;
         
-        printf("[DEQUEUE] Rank %d: Retry %d - Reading ranks snapshot\n",
-               mpi_get_rank(&queue->mpi_ctx), retry_count);
+        // printf("[DEQUEUE] Rank %d: Retry %d with rank=%d\n",
+        //        mpi_get_rank(&queue->mpi_ctx), retry_count, rank);
         
-        // Line 4: rankSnap ← ReadCompositeSnap(ranks[rank : rank + k])
-        MPI_TRY(mpi_get_accumulate(&no_op_val, max_count, MPI_INT,
-                                    ranks_buf, max_count, MPI_INT,
-                                    target_rank, disp, max_count, MPI_INT,
-                                    MPI_NO_OP, &queue->win_ranks));
-        
-        printf("[DEQUEUE] Rank %d: ranks_buf = [", mpi_get_rank(&queue->mpi_ctx));
+        // Line 4: pending ← [0, 1, ..., k-1], skipped ← []
         for (int i = 0; i < max_count; i++) {
-            printf("%d%s", ranks_buf[i], i < max_count - 1 ? ", " : "");
-        }
-        printf("]\n");
-        
-        // Line 5: pending ← {i ∈ pending | rankSnap[i] ≠ rank + i}
-        for (int i = 0; i < max_count; i++) {
-            if (pending[i] && ranks_buf[i] == rank + i) {
-                pending[i] = false;
-                printf("[DEQUEUE] Rank %d: Item %d matched (ranks_buf[%d]=%d == rank+i=%d), removing from pending\n",
-                       mpi_get_rank(&queue->mpi_ctx), i, i, ranks_buf[i], rank + i);
-            }
+            pending[i] = true;
+            skipped[i] = false;
+            ready[i] = false;
         }
         
-        // Line 6: if pending ≠ [] then
-        bool has_pending = false;
-        for (int i = 0; i < max_count; i++) {
-            if (pending[i]) {
-                has_pending = true;
-                break;
-            }
-        }
+        int pos = rank % queue->size;
+        MPI_Aint disp = pos * sizeof(int);
         
-        printf("[DEQUEUE] Rank %d: has_pending=%d\n",
-               mpi_get_rank(&queue->mpi_ctx), has_pending);
-        
-        if (has_pending) {
-            // Line 7: gapSnap ← ReadCompositeSnap(gaps[rank : rank + k])
+        // Inner loop to handle waiting similar to r-FFQ
+        while (!timeout_occurred) {
+            // Line 5: rankSnap ← ReadCompositeSnap(ranks[rank : rank + k])
             MPI_TRY(mpi_get_accumulate(&no_op_val, max_count, MPI_INT,
-                                        gaps_buf, max_count, MPI_INT,
+                                        ranks_buf, max_count, MPI_INT,
                                         target_rank, disp, max_count, MPI_INT,
-                                        MPI_NO_OP, &queue->win_gaps));
+                                        MPI_NO_OP, &queue->win_ranks));
             
-            // Line 8: ready ← {i ∈ pending | gapSnap[i] ≥ rank + i}
-            bool has_ready = false;
+            // printf("[DEQUEUE] Rank %d: ranks_buf = [", mpi_get_rank(&queue->mpi_ctx));
+            // for (int i = 0; i < max_count; i++) {
+            //     printf("%d%s", ranks_buf[i], i < max_count - 1 ? ", " : "");
+            // }
+            // printf("]\n");
+            
+            // Line 6: pending ← {i ∈ pending | rankSnap[i] ≠ rank + i}
+            bool made_progress = false;
             for (int i = 0; i < max_count; i++) {
-                ready[i] = false;
-                if (pending[i] && gaps_buf[i] >= rank + i) {
-                    ready[i] = true;
-                    has_ready = true;
+                if (pending[i] && ranks_buf[i] == rank + i) {
+                    pending[i] = false;
+                    made_progress = true;
+                    // printf("[DEQUEUE] Rank %d: Item %d matched (ranks_buf[%d]=%d == rank+i=%d), removing from pending\n",
+                    //        mpi_get_rank(&queue->mpi_ctx), i, i, ranks_buf[i], rank + i);
                 }
             }
             
-            // Line 9: if ready ≠ [] then
-            if (has_ready) {
-                // Line 10: rankSnap ← ReadCompositeSnap(ranks[rank : rank + k])
-                MPI_TRY(mpi_get_accumulate(&no_op_val, max_count, MPI_INT,
-                                            ranks_buf, max_count, MPI_INT,
-                                            target_rank, disp, max_count, MPI_INT,
-                                            MPI_NO_OP, &queue->win_ranks));
-                
-                // Line 11: skipped ← skipped ∪ {i ∈ ready | rankSnap[i] ≠ rank + i}
-                for (int i = 0; i < max_count; i++) {
-                    if (ready[i] && ranks_buf[i] != rank + i) {
-                        skipped[i] = true;
-                    }
-                }
-                
-                // Line 12: pending ← pending \ ready
-                for (int i = 0; i < max_count; i++) {
-                    if (ready[i]) {
-                        pending[i] = false;
-                    }
-                }
+            // Reset wait_count on progress (r-FFQ style)
+            if (made_progress) {
+                wait_count = 0;
             }
-            // Line 13: end if
             
-            // Line 14: if pending ≠ [] then
-            has_pending = false;
+            // Line 7: if pending ≠ [] then
+            bool has_pending = false;
             for (int i = 0; i < max_count; i++) {
                 if (pending[i]) {
                     has_pending = true;
@@ -385,75 +341,166 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
                 }
             }
             
+            // printf("[DEQUEUE] Rank %d: has_pending=%d\n",
+            //        mpi_get_rank(&queue->mpi_ctx), has_pending);
+            
             if (has_pending) {
-                // Line 15: pending ← {i ∈ pending | gapSnap[i] < rank + i}
+                // Line 8: gapSnap ← ReadCompositeSnap(gaps[rank : rank + k])
+                MPI_TRY(mpi_get_accumulate(&no_op_val, max_count, MPI_INT,
+                                            gaps_buf, max_count, MPI_INT,
+                                            target_rank, disp, max_count, MPI_INT,
+                                            MPI_NO_OP, &queue->win_gaps));
+                
+                // Line 9: ready ← {i ∈ pending | gapSnap[i] ≥ rank + i}
+                bool has_ready = false;
                 for (int i = 0; i < max_count; i++) {
+                    ready[i] = false;
                     if (pending[i] && gaps_buf[i] >= rank + i) {
-                        pending[i] = false;
+                        ready[i] = true;
+                        has_ready = true;
                     }
                 }
                 
-                // Line 16: wait()
-                wait_count++;
-                usleep(10);
-                // Line 17: continue
-                continue;
+                // Line 10: if ready ≠ [] then
+                if (has_ready) {
+                    // Line 11: rankSnap ← ReadCompositeSnap(ranks[rank : rank + k])
+                    MPI_TRY(mpi_get_accumulate(&no_op_val, max_count, MPI_INT,
+                                                ranks_buf, max_count, MPI_INT,
+                                                target_rank, disp, max_count, MPI_INT,
+                                                MPI_NO_OP, &queue->win_ranks));
+                    
+                    // Line 12: skipped ← skipped ∪ {i ∈ ready | rankSnap[i] ≠ rank + i}
+                    for (int i = 0; i < max_count; i++) {
+                        if (ready[i] && ranks_buf[i] != rank + i) {
+                            skipped[i] = true;
+                            made_progress = true;  // Marking as skipped is progress
+                        }
+                    }
+                    
+                    // Line 13: pending ← pending \ ready
+                    for (int i = 0; i < max_count; i++) {
+                        if (ready[i]) {
+                            pending[i] = false;
+                        }
+                    }
+                    
+                    // Reset wait_count on progress
+                    if (made_progress) {
+                        wait_count = 0;
+                    }
+                }
+                // Line 14: end if
+                
+                // Line 15: if pending ≠ [] then
+                has_pending = false;
+                for (int i = 0; i < max_count; i++) {
+                    if (pending[i]) {
+                        has_pending = true;
+                        break;
+                    }
+                }
+                
+                if (has_pending) {
+                    // Check timeout before waiting (r-FFQ style)
+                    if (wait_count >= MAX_WAIT_COUNT) {
+               // printf("[DEQUEUE] Rank %d: TIMEOUT after %d waits - cells not ready\n",
+               //        mpi_get_rank(&queue->mpi_ctx), wait_count);
+                        timeout_occurred = true;
+                        break;  // Exit inner waiting loop
+                    }
+                    
+                    // Line 16: pending ← {i ∈ pending | gapSnap[i] < rank + i}
+                    for (int i = 0; i < max_count; i++) {
+                        if (pending[i] && gaps_buf[i] >= rank + i) {
+                            pending[i] = false;
+                        }
+                    }
+                    
+                    // Line 17: wait()
+                    wait_count++;
+                    usleep(100);  // Wait time for remote operations
+                    // printf("[DEQUEUE] Rank %d: Waiting... (wait_count=%d/%d)\n",
+                    //        mpi_get_rank(&queue->mpi_ctx), wait_count, MAX_WAIT_COUNT);
+                    // Line 18: continue (inner loop continues)
+                    continue;
+                }
+                // Line 19: end if
             }
-            // Line 18: end if
+            // Line 20: end if
+            
+            // No more pending items, exit inner waiting loop
+            break;
         }
-        // Line 19: end if
         
-        // Line 20: data ← Read(datas[rank : rank + k])
-        MPI_Aint data_disp = pos * sizeof(int);
-        MPI_TRY(mpi_get(datas_buf, max_count, MPI_INT, target_rank, data_disp, &queue->win_datas));
-        
-        printf("[DEQUEUE] Rank %d: Read datas_buf = [", mpi_get_rank(&queue->mpi_ctx));
-        for (int i = 0; i < max_count; i++) {
-            printf("%d%s", datas_buf[i], i < max_count - 1 ? ", " : "");
+        // Check if timeout occurred - exit immediately without reading data (r-FFQ style)
+        if (timeout_occurred) {
+         // printf("[DEQUEUE] Rank %d: Queue empty (timeout after %d waits)\n",
+         //        mpi_get_rank(&queue->mpi_ctx), wait_count);
+            break;  // Exit outer retry loop
         }
-        printf("]\n");
         
-        // Copy only non-skipped data to output (for i ∉ skipped)
-        int out_idx = 0;
+        // Line 21: if |skipped| < k then
+        int skipped_count = 0;
         for (int i = 0; i < max_count; i++) {
-            if (!skipped[i]) {
-                out_data[out_idx++] = datas_buf[i];
-                printf("[DEQUEUE] Rank %d: Dequeued item %d: value=%d\n",
-                       mpi_get_rank(&queue->mpi_ctx), i, datas_buf[i]);
-            } else {
-                printf("[DEQUEUE] Rank %d: Skipped item %d\n",
-                       mpi_get_rank(&queue->mpi_ctx), i);
+            if (skipped[i]) {
+                skipped_count++;
             }
         }
         
-        // Line 21: AtomicWrite(ranks[rank + i : rank + k], -1) for i ∉ skipped
-        update_ranks_ranges(queue, rank, skipped, max_count);
-        
-        // Line 22: return data (count of non-skipped items)
-        int dequeued_count = 0;
-        for (int i = 0; i < max_count; i++) {
-            if (!skipped[i]) {
-                dequeued_count++;
+        if (skipped_count < max_count) {
+            // Line 22: data ← Read(datas[rank + i : rank + k]) for i ∉ skipped
+            MPI_Aint data_disp = pos * sizeof(int);
+            MPI_TRY(mpi_get(datas_buf, max_count, MPI_INT, target_rank, data_disp, &queue->win_datas));
+            
+            // printf("[DEQUEUE] Rank %d: Read datas_buf = [", mpi_get_rank(&queue->mpi_ctx));
+            // for (int i = 0; i < max_count; i++) {
+            //     printf("%d%s", datas_buf[i], i < max_count - 1 ? ", " : "");
+            // }
+            // printf("]\n");
+           
+            // Copy only non-skipped data to output (for i ∉ skipped)
+            int out_idx = 0;
+            for (int i = 0; i < max_count; i++) {
+                if (!skipped[i]) {
+                    out_data[out_idx++] = datas_buf[i];
+              // printf("[DEQUEUE] Rank %d: Dequeued item %d: value=%d\n",
+              //        mpi_get_rank(&queue->mpi_ctx), i, datas_buf[i]);
+                } else {
+              // printf("[DEQUEUE] Rank %d: Skipped item %d\n",
+              //        mpi_get_rank(&queue->mpi_ctx), i);
+                }
             }
+            
+            // Line 23: AtomicWrite(ranks[rank + i : rank + k], -1) for i ∉ skipped
+            update_ranks_ranges(queue, rank, skipped, max_count);
+            
+            // Line 24: return data (count of non-skipped items)
+            int dequeued_count = max_count - skipped_count;
+            
+         // printf("[DEQUEUE] Rank %d: SUCCESS - Returning %d items (skipped=%d)\n",
+         //        mpi_get_rank(&queue->mpi_ctx), dequeued_count, skipped_count);
+            
+            free(pending);
+            free(skipped);
+            free(ready);
+            free(ranks_buf);
+            free(gaps_buf);
+            free(datas_buf);
+            return dequeued_count;
         }
+        // Line 25: end if
         
-        printf("[DEQUEUE] Rank %d: Returning %d items (skipped=%d)\n",
-               mpi_get_rank(&queue->mpi_ctx), dequeued_count, max_count - dequeued_count);
+        // Line 26: rank ← FetchInc(head, k)
+    // printf("[DEQUEUE] Rank %d: All %d items skipped, fetching new rank\n",
+    //        mpi_get_rank(&queue->mpi_ctx), max_count);
+        MPI_TRY(mpi_fetch_and_op(&max_count, &rank, MPI_INT, target_rank, 0, MPI_SUM, &queue->win_head));
         
-        free(pending);
-        free(skipped);
-        free(ready);
-        free(ranks_buf);
-        free(gaps_buf);
-        free(datas_buf);
-        return dequeued_count;
-        
-        // Line 23: end while
+        // Line 27: end while (continue to next iteration)
     }
     
-    // Timeout or retry limit reached
-    printf("[DEQUEUE] Rank %d: TIMEOUT - retry_count=%d, wait_count=%d\n",
-           mpi_get_rank(&queue->mpi_ctx), retry_count, wait_count);
+    // Retry limit reached
+    // printf("[DEQUEUE] Rank %d: Giving up after %d retries\n",
+    //        mpi_get_rank(&queue->mpi_ctx), retry_count);
     
     free(pending);
     free(skipped);

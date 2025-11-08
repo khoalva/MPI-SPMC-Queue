@@ -41,8 +41,8 @@ int spmc_queue_init_with_queue_owner(spmc_queue_t *queue, int argc, char *argv[]
     int is_queue_owner = (rank == queue_owner_rank);
     
     // Allocate memory using the custom library - only queue owner allocates
-    queue->head = mpi_calloc(MAX_ROWS * sizeof(int), 0, is_queue_owner);
-    queue->items = mpi_calloc(MAX_ROWS * MAX_COLS * sizeof(int), 0, is_queue_owner);
+    queue->head = mpi_calloc(MAX_ROWS * sizeof(int), queue_owner_rank, rank);
+    queue->items = mpi_calloc(MAX_ROWS * MAX_COLS * sizeof(int), queue_owner_rank, rank);
     
     if (is_queue_owner) {
         if (!queue->head || !queue->items) {
@@ -98,7 +98,7 @@ int spmc_queue_init_with_queue_owner(spmc_queue_t *queue, int argc, char *argv[]
 
 // Backward compatibility: default queue owner at rank 0
 int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
-    return spmc_queue_init_with_queue_owner(queue, argc, argv, 0);
+    return spmc_queue_init_with_queue_owner(queue, argc, argv, 1);
 }
 
 void spmc_queue_destroy(spmc_queue_t *queue) {
@@ -145,15 +145,17 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     // AtomicSwap: MPI_Fetch_and_op with MPI_REPLACE
     MPI_TRY(mpi_fetch_and_op(&value, &val, MPI_INT, target_rank, byte_offset, MPI_REPLACE, &queue->win_items));
     
-    // printf("[ENQ_SWAP_RESULT] Rank %d: Swap returned original value: %d\n",
-    //        mpi_get_rank(&queue->mpi_ctx), val);
+    // printf("[ENQ_SWAP_RESULT] Rank %d: Swap returned original value: %d (expected L=%d or T=%d)\n",
+    //        mpi_get_rank(&queue->mpi_ctx), val, L, T);
     
     // Check if we hit the end-of-row marker (T)
     if (val == T) {
         // Move to next row
+        // printf("[ENQ_ROW_CHANGE] Rank %d: Hit T marker, moving from row %d to row %d\n",
+        //        mpi_get_rank(&queue->mpi_ctx), queue->eng_row, queue->eng_row + 1);
         queue->eng_row++;
         if (queue->eng_row >= MAX_ROWS) {
-            // fprintf(stderr, "Row limit exceeded\n");
+            fprintf(stderr, "Row limit exceeded\n");
             return -1;
         }
         queue->tail = 0;

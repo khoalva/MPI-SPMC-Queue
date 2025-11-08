@@ -139,8 +139,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             int tail_val = queue->tail;
             MPI_TRY(mpi_accumulate(&tail_val, 1, MPI_INT, target_rank, gap_disp, MPI_REPLACE, &queue->win_cells));
             
-            printf("[ENQUEUE][rank %d] Contention at pos %d. Cell rank=%d, marking gap=%d\n", 
-                   mpi_get_rank(&queue->mpi_ctx), pos, cell_rank, queue->tail);
+         // printf("[ENQUEUE][rank %d] Contention at pos %d. Cell rank=%d, marking gap=%d\n", 
+         //        mpi_get_rank(&queue->mpi_ctx), pos, cell_rank, queue->tail);
             // Continue loop (Line 12: end while)
         } else {
             // Line 8: AtomicWrite(cells[tail(mod N)].data, data)
@@ -153,8 +153,8 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
             int tail_val = queue->tail;
             MPI_TRY(mpi_accumulate(&tail_val, 1, MPI_INT, target_rank, rank_disp, MPI_REPLACE, &queue->win_cells));
             
-            printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | tail=%d\n",
-                   mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
+         // printf("[ENQUEUE][rank %d] Enqueued item: %d at pos %d | tail=%d\n",
+         //        mpi_get_rank(&queue->mpi_ctx), value, pos, queue->tail);
             
             // Line 10: success ← TRUE
             success = true;
@@ -217,8 +217,8 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
                 int empty_val = EMPTY_CELL;
                 MPI_TRY(mpi_accumulate(&empty_val, 1, MPI_INT, target_rank, rank_disp, MPI_REPLACE, &queue->win_cells));
                 
-                printf("[DEQUEUE][rank %d] SUCCESS: Dequeued data=%d at pos=%d, rank=%d (retries=%d, waits=%d)\n", 
-                       mpi_get_rank(&queue->mpi_ctx), out_data[dequeued], cell_pos, rank + i, retry_count, wait_count);
+          // printf("[DEQUEUE][rank %d] SUCCESS: Dequeued data=%d at pos=%d, rank=%d (retries=%d, waits=%d)\n", 
+          //        mpi_get_rank(&queue->mpi_ctx), out_data[dequeued], cell_pos, rank + i, retry_count, wait_count);
 
                 // Line 9: dequeued ← dequeued + 1
                 dequeued++;
@@ -228,16 +228,16 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
             } else if(c[i].gap >= rank + i) {
                 // Line 11: else if c[i].gap ≥ rank + i then
                 // Line 12: i ← i + 1
-                printf("[DEQUEUE][rank %d] Skipping rank %d (overtaken, gap=%d)\n",
-                       mpi_get_rank(&queue->mpi_ctx), rank + i, c[i].gap);
+          // printf("[DEQUEUE][rank %d] Skipping rank %d (overtaken, gap=%d)\n",
+          //        mpi_get_rank(&queue->mpi_ctx), rank + i, c[i].gap);
                 i++;
                 wait_count = 0;  // Reset wait count
             } else {
                 // Line 13: else
                 // Check if we've waited too long - cell is still empty
                 if (wait_count >= MAX_WAIT_COUNT) {
-                    printf("[DEQUEUE][rank %d] TIMEOUT: Cell at rank %d still empty after %d waits (cell.rank=%d, cell.gap=%d)\n",
-                           mpi_get_rank(&queue->mpi_ctx), rank + i, wait_count, c[i].rank, c[i].gap);
+              // printf("[DEQUEUE][rank %d] TIMEOUT: Cell at rank %d still empty after %d waits (cell.rank=%d, cell.gap=%d)\n",
+              //        mpi_get_rank(&queue->mpi_ctx), rank + i, wait_count, c[i].rank, c[i].gap);
                     timeout_occurred = true;  // Set timeout flag
                     break;  // Exit inner loop
                 }
@@ -262,38 +262,38 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
         // Line 18: if i = k ∧ dequeued > 0 then
         if(i == max_count && dequeued > 0) {
             // Line 19: return data
-            printf("[DEQUEUE][rank %d] Returning %d items successfully dequeued\n", 
-                   mpi_get_rank(&queue->mpi_ctx), dequeued);
+         // printf("[DEQUEUE][rank %d] Returning %d items successfully dequeued\n", 
+         //        mpi_get_rank(&queue->mpi_ctx), dequeued);
             free(c);
             return dequeued;
         }
         
         // If we got some items but didn't complete the batch, return what we have
         if (dequeued > 0) {
-            printf("[DEQUEUE][rank %d] Partial dequeue: returning %d items (requested %d)\n",
-                   mpi_get_rank(&queue->mpi_ctx), dequeued, max_count);
+         // printf("[DEQUEUE][rank %d] Partial dequeue: returning %d items (requested %d)\n",
+         //        mpi_get_rank(&queue->mpi_ctx), dequeued, max_count);
             free(c);
             return dequeued;
         }
         
         // Check if timeout occurred - exit immediately without retry
         if (timeout_occurred) {
-            printf("[DEQUEUE][rank %d] Queue empty (timeout after %d waits)\n",
-                   mpi_get_rank(&queue->mpi_ctx), wait_count);
+         // printf("[DEQUEUE][rank %d] Queue empty (timeout after %d waits)\n",
+         //        mpi_get_rank(&queue->mpi_ctx), wait_count);
             break;  // Exit outer loop - don't retry
         }
         
         // Line 21: if i = k then (completed iteration but no items)
         if(i == max_count && retry_count < MAX_DEQUEUE_RETRIES) {
             // Line 22: rank ← FetchInc(head, k)
-            printf("[DEQUEUE][rank %d] No items in current batch, trying next batch (retry %d/%d)\n",
-                   mpi_get_rank(&queue->mpi_ctx), retry_count, MAX_DEQUEUE_RETRIES);
+         // printf("[DEQUEUE][rank %d] No items in current batch, trying next batch (retry %d/%d)\n",
+         //        mpi_get_rank(&queue->mpi_ctx), retry_count, MAX_DEQUEUE_RETRIES);
             MPI_TRY(mpi_fetch_and_op(&max_count, &rank, MPI_INT, target_rank, 0, MPI_SUM, &queue->win_head));
             retry_count++;  // Increment retry count on each new FetchInc
         } else {
             // Exceeded retry limit
-            printf("[DEQUEUE][rank %d] Giving up after %d retries\n",
-                   mpi_get_rank(&queue->mpi_ctx), retry_count);
+         // printf("[DEQUEUE][rank %d] Giving up after %d retries\n",
+         //        mpi_get_rank(&queue->mpi_ctx), retry_count);
             break;
         }
     }
