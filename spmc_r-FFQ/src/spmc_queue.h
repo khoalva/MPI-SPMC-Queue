@@ -8,24 +8,26 @@
 #define EMPTY_CELL -1
 #define DEQUEUED_CELL -2
 #define MAX_QUEUE_SIZE 110000
-#define BATCH_SIZE 4
-#define MAX_DEQUEUE_RETRIES 10
-#define MAX_WAIT_COUNT 10000
+#define BATCH_SIZE 5
+#define MAX_WAIT_COUNT 500  // Increased for remote operations
+#define MAX_DEQUEUE_RETRIES 5  // More retries for remote queue
+typedef struct {
+    int rank;        // Producer rank
+    int gap;         // Gap for ordering
+    int data;        // Actual data (integer)
+} spmc_cell_t;
+
 typedef struct {
     mpi_context_t mpi_ctx; // MPI context for communication
 
-    int *ranks;  // Array for producer ranks
-    int *gaps;   // Array for gaps/ordering
-    int *datas;  // Array for actual data
+    spmc_cell_t *cells; // Pointer to cells array
     int head;
     int tail;
     int size;
     
     int queue_owner_rank; // Rank where queue memory is allocated (default: 0)
     
-    mpi_window_t win_ranks;
-    mpi_window_t win_gaps;
-    mpi_window_t win_datas;
+    mpi_window_t win_cells;
     mpi_window_t win_head;
 } spmc_queue_t;
 

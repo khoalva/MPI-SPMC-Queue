@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
         printf("Rank %d: Starting as CONSUMER\n", mpi_get_rank(&queue.mpi_ctx));
         
         int items_consumed = 0;
-        int max_attempts = 50; // More attempts to catch items as they're produced
+        int max_attempts = 10; // More attempts to catch items as they're produced
         
         // Get batch size from queue implementation
         int batch_size = spmc_queue_get_batch_size(&queue);
