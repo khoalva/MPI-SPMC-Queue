@@ -450,7 +450,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
         // printf("[Rank %d][DEQUEUE] Updated last_deq_row to %d\n", rank, deq_row);
     } else if (!is_new_row && queue->c->last_value == L) {
         // printf("[Rank %d][DEQUEUE] No new row and last value was L - returning empty\n", rank);
-        usleep(100000);
+        // usleep(100000);  // REMOVED: This was causing severe performance degradation
         return 0;  // No items dequeued
     }
     
@@ -526,11 +526,11 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     
     // Check return value
     if (GET_DATA(old_cell) == L || GET_GEN(old_cell) != deq_row) {
-        printf("[Rank %d][DEQUEUE] Invalid cell: data=%d (L=%d), gen=%d, head=%d, index=%d\n", 
-               rank, GET_DATA(old_cell), L, GET_GEN(old_cell), head, index);
+        printf("[Rank %d][DEQUEUE] Invalid cell: data=%d (L=-1), gen=%d, head=%d, index=%d\n", 
+               rank, GET_DATA(old_cell), GET_GEN(old_cell), head, index);
         queue->c->last_value = L;
         // print_timing("DEQUEUE_TOTAL", dequeue_start, rank);
-        usleep(100);  // Small sleep to avoid busy looping
+        // usleep(100);  // REMOVED: This was causing ~100μs penalty per failed dequeue
         return 0;  // No items dequeued
     } else {
         // printf("[Rank %d][DEQUEUE] Successfully dequeued value: %d at index=%d, head=%d\n", rank, GET_DATA(old_cell), index, head);

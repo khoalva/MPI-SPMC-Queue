@@ -8,9 +8,9 @@
 #define EMPTY_CELL -1
 #define DEQUEUED_CELL -2
 #define MAX_QUEUE_SIZE 110000
-#define BATCH_SIZE 4
-#define MAX_DEQUEUE_RETRIES 5
-#define MAX_WAIT_COUNT 500
+#define BATCH_SIZE 100
+#define MAX_DEQUEUE_RETRIES 1
+#define MAX_WAIT_COUNT 10
 typedef struct {
     mpi_context_t mpi_ctx; // MPI context for communication
 

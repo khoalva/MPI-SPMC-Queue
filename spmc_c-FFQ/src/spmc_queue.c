@@ -418,7 +418,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
                     
                     // Line 17: wait()
                     wait_count++;
-                    usleep(100);  // Wait time for remote operations
+                    usleep(10);  // Wait time for remote operations
                     // printf("[DEQUEUE] Rank %d: Waiting... (wait_count=%d/%d)\n",
                     //        mpi_get_rank(&queue->mpi_ctx), wait_count, MAX_WAIT_COUNT);
                     // Line 18: continue (inner loop continues)
@@ -434,8 +434,8 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
         
         // Check if timeout occurred - exit immediately without reading data (r-FFQ style)
         if (timeout_occurred) {
-         // printf("[DEQUEUE] Rank %d: Queue empty (timeout after %d waits)\n",
-         //        mpi_get_rank(&queue->mpi_ctx), wait_count);
+         printf("[DEQUEUE] Rank %d: Queue empty (timeout after %d waits)\n",
+                mpi_get_rank(&queue->mpi_ctx), wait_count);
             break;  // Exit outer retry loop
         }
         
@@ -463,8 +463,8 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
             for (int i = 0; i < max_count; i++) {
                 if (!skipped[i]) {
                     out_data[out_idx++] = datas_buf[i];
-              // printf("[DEQUEUE] Rank %d: Dequeued item %d: value=%d\n",
-              //        mpi_get_rank(&queue->mpi_ctx), i, datas_buf[i]);
+              printf("[DEQUEUE] Rank %d: Dequeued item %d: value=%d\n",
+                     mpi_get_rank(&queue->mpi_ctx), i, datas_buf[i]);
                 } else {
               // printf("[DEQUEUE] Rank %d: Skipped item %d\n",
               //        mpi_get_rank(&queue->mpi_ctx), i);
