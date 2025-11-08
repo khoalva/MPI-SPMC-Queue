@@ -590,10 +590,10 @@ run_benchmark() {
             timeout_seconds=150  # 2.5 minutes for stress test (config says 300s + buffer)
             ;;
         enqueue_only)
-            timeout_seconds=15  # Enqueue-only test should be fast
+            timeout_seconds=5  # Enqueue-only test should be fast
             ;;
         dequeue_only)
-            timeout_seconds=15  # Dequeue-only test should be fast
+            timeout_seconds=5  # Dequeue-only test should be fast
             ;;
         *)
             timeout_seconds=60
