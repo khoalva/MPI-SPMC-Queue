@@ -44,11 +44,12 @@ int main(int argc, char *argv[]) {
     int mpi_size = mpi_get_size(&queue.mpi_ctx);
     
     // Validate process count for enqueue_only test
-    if (strcmp(test_type, "enqueue_only") == 0 && mpi_size < 2) {
+    // NEW DESIGN: enqueue_only only needs rank 0 as producer, minimum 1 process
+    if (strcmp(test_type, "enqueue_only") == 0 && mpi_size < 1) {
         if (mpi_rank == 0) {
-            fprintf(stderr, "ERROR: enqueue_only test requires at least 2 processes!\n");
-            fprintf(stderr, "       Queue is at node 0, producers must be at nodes 1+\n");
-            fprintf(stderr, "       Usage: mpirun -np <N> %s enqueue_only (where N >= 2)\n", argv[0]);
+            fprintf(stderr, "ERROR: enqueue_only test requires at least 1 process!\n");
+            fprintf(stderr, "       Rank 0 is the producer\n");
+            fprintf(stderr, "       Usage: mpirun -np <N> %s enqueue_only (where N >= 1)\n", argv[0]);
         }
         spmc_queue_destroy(&queue);
         return 1;
@@ -84,14 +85,15 @@ static int run_benchmark_test(spmc_queue_t *queue, const char *test_type) {
     int is_enqueue_only = (strcmp(test_type, "enqueue_only") == 0);
     int is_dequeue_only = (strcmp(test_type, "dequeue_only") == 0);
     
-    // For enqueue_only test: Queue is at node 0, only nodes != 0 enqueue (remote operations)
-    // Override is_producer for enqueue_only test
+    // NEW DESIGN: Rank 0 is ALWAYS the producer
+    // Queue owner can be at any rank depending on the algorithm
+    // For enqueue_only test: Only rank 0 enqueues (testing single producer performance)
     if (is_enqueue_only) {
-        is_producer = (mpi_rank != 0);  // Only non-zero ranks are producers
+        is_producer = (mpi_rank == 0);  // Only rank 0 is producer
         if (mpi_rank == 0) {
-            printf("Rank %d: Queue owner, NOT producing in enqueue_only test (to force remote operations)\n", mpi_rank);
+            printf("Rank %d: Producer in enqueue_only test\n", mpi_rank);
         } else {
-            printf("Rank %d: Producer in enqueue_only test (remote operations to node 0)\n", mpi_rank);
+            printf("Rank %d: Not producing in enqueue_only test\n", mpi_rank);
         }
     }
     
@@ -193,7 +195,11 @@ static int run_benchmark_test(spmc_queue_t *queue, const char *test_type) {
         
     } else if (!is_producer || is_dequeue_only) {
         // Consumer workload (or dequeue_only for all ranks except prefiller)
-        if (is_dequeue_only && mpi_rank == 0) {
+        // IMPORTANT: In enqueue_only test, NO dequeue operations should happen
+        if (is_enqueue_only) {
+            // In enqueue_only test, non-producer ranks do nothing
+            printf("Rank %d: Idle in enqueue_only test (no dequeue operations)\n", mpi_rank);
+        } else if (is_dequeue_only && mpi_rank == 0) {
             // Rank 0 was the prefiller, it doesn't consume in dequeue_only test
             printf("Rank %d: Prefiller process, not consuming\n", mpi_rank);
         } else {
