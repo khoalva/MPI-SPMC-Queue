@@ -10,7 +10,7 @@
 #define MAX_QUEUE_SIZE 110000
 #define BATCH_SIZE 100
 #define MAX_DEQUEUE_RETRIES 1
-#define MAX_WAIT_COUNT 10
+#define MAX_WAIT_COUNT 1
 typedef struct {
     int rank;        // Producer rank
     int gap;         // Gap for ordering

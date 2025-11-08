@@ -244,7 +244,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
                 
                 // Line 14: wait()
                 wait_count++;
-                usleep(100);  // Increased wait time for remote operations
+                usleep(10);  // Increased wait time for remote operations
                 
                 // Line 15: Re-read c ← ReadCompositeSnap(cells[rank + i : rank + k])
                 spmc_cell_t no_op_val_wait = {0};
