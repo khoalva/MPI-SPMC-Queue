@@ -139,7 +139,7 @@ int spmc_queue_init_with_queue_owner(spmc_queue_t *queue, int argc, char *argv[]
 
 // Backward compatibility: default queue owner at rank 0
 int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]) {
-    return spmc_queue_init_with_queue_owner(queue, argc, argv, 1);
+    return spmc_queue_init_with_queue_owner(queue, argc, argv, 0);
 }
 
 /**
