@@ -581,14 +581,19 @@ generate_enhanced_csv() {
     
     # Extract metrics from simple CSV format
     local producer_time=$(grep -i "Producer.*Time" "$source_csv" | cut -d',' -f2 | tr -d ' ')
-    local producer_throughput=$(grep -i "Producer.*Throughput" "$source_csv" | cut -d',' -f2 | tr -d ' ')
+    local enqueue_throughput=$(grep -i "Producer.*Throughput" "$source_csv" | cut -d',' -f2 | tr -d ' ')
     local avg_consumer_time=$(grep -i "Avg.*Consumer.*Time\|Average.*Consumer.*Time" "$source_csv" | cut -d',' -f2 | tr -d ' ')
     local min_consumer_time=$(grep -i "Min.*Consumer.*Time" "$source_csv" | cut -d',' -f2 | tr -d ' ')
     local max_consumer_time=$(grep -i "Max.*Consumer.*Time" "$source_csv" | cut -d',' -f2 | tr -d ' ')
-    local total_throughput=$(grep -i "Total.*Throughput" "$source_csv" | cut -d',' -f2 | tr -d ' ')
     
-    # Calculate latency
+    # Calculate average consumer (dequeue) throughput, not total
+    local dequeue_throughput=$(echo "$ops_per_consumer $avg_consumer_time" | awk '{if($2>0) printf "%.2f", $1/$2; else print "0.0"}')
+    
+    # Calculate latency per operation
     local avg_latency_ms=$(echo "$avg_consumer_time $ops_per_consumer" | awk '{if($2>0) printf "%.6f", ($1/$2)*1000; else print "0.0"}')
+    
+    # Calculate total operations (3N = 2N enqueue + N dequeue)
+    local total_ops=$((3 * num_consumers * ops_per_consumer))
     
     # Get memory usage - only match CSV data line, not comments
     local memory_mb=$(grep -i "^Memory Usage," "$source_csv" | cut -d',' -f2 | tr -d ' ')
@@ -598,8 +603,8 @@ generate_enhanced_csv() {
     
     # Create enhanced CSV matching benchmark.c format
     {
-        echo "Test_Name,Queue_Implementation,MPI_Size,Num_Consumers,Ops_Per_Consumer,Total_Operations,Producer_Time_Sec,Producer_Throughput_Ops_Per_Sec,Avg_Consumer_Time_Sec,Min_Consumer_Time_Sec,Max_Consumer_Time_Sec,Total_Consumer_Throughput_Ops_Per_Sec,Avg_Latency_Ms,Memory_Usage_MB"
-        echo "\"Micro Benchmark\",\"${queue_name}\",${num_procs},${num_consumers},${ops_per_consumer},$((num_consumers * ops_per_consumer)),${producer_time:-0.0},${producer_throughput:-0.0},${avg_consumer_time:-0.0},${min_consumer_time:-0.0},${max_consumer_time:-0.0},${total_throughput:-0.0},${avg_latency_ms},${memory_mb}"
+        echo "Test_Name,Queue_Implementation,MPI_Size,Num_Consumers,Ops_Per_Consumer,Total_Operations,Producer_Time_Sec,Enqueue_Throughput_Ops_Per_Sec,Avg_Consumer_Time_Sec,Min_Consumer_Time_Sec,Max_Consumer_Time_Sec,Dequeue_Throughput_Ops_Per_Sec,Avg_Latency_Ms,Memory_Usage_MB"
+        echo "\"Micro Benchmark\",\"${queue_name}\",${num_procs},${num_consumers},${ops_per_consumer},${total_ops},${producer_time:-0.0},${enqueue_throughput:-0.0},${avg_consumer_time:-0.0},${min_consumer_time:-0.0},${max_consumer_time:-0.0},${dequeue_throughput:-0.0},${avg_latency_ms},${memory_mb}"
     } > "$output_csv"
     
     log_success "Generated enhanced summary: $output_csv"
