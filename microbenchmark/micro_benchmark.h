@@ -23,7 +23,7 @@
  */
 
 // Fixed operations per consumer (can be configured)
-#define DEFAULT_OPS_PER_CONSUMER 5000
+#define DEFAULT_OPS_PER_CONSUMER 1000
 
 // Micro benchmark configuration
 typedef struct {

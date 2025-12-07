@@ -23,12 +23,12 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SESSION_DIR="${RESULTS_DIR}/session_${TIMESTAMP}"
 
 # Default parameters
-OPS_PER_CONSUMER=5000  # Reduced for faster micro benchmark execution
+OPS_PER_CONSUMER=1000  # Reduced for faster micro benchmark execution
 NUM_PROCESSES=5  # Default: 1 producer + 4 consumers
 MPI_HOSTS=""
 SPMC_PATH=""
 VERBOSE=false
-TIMEOUT=20  # Default timeout: 20 seconds 
+TIMEOUT=30  # Default timeout: 30 seconds 
 
 # Usage function
 usage() {
@@ -39,18 +39,18 @@ usage() {
     echo -e "${BLUE}Usage:${NC} $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  -o OPS        Operations per consumer (default: 5000)"
+    echo "  -o OPS        Operations per consumer (default: 1000)"
     echo "  -p PROCS      Total number of MPI processes (default: 5 = 1 producer + 4 consumers)"
     echo "  -H HOSTS      Comma-separated list of MPI hosts/nodes"
     echo "                Example: -H node1,node2,node3"
     echo "  -s PATH       Path to SPMC implementation directory"
     echo "                (if not specified, will auto-detect or prompt)"
-    echo "  -t SECONDS    Timeout for benchmark execution (default: 120 seconds)"
+    echo "  -t SECONDS    Timeout for benchmark execution (default: 30 seconds)"
     echo "  -v            Enable verbose output"
     echo "  -h            Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0                                  # Auto-detect queue, 5 processes (1+4), 5K ops"
+    echo "  $0                                  # Auto-detect queue, 5 processes (1+4), 1K ops"
     echo "  $0 -p 9                             # Run with 9 processes (1 producer + 8 consumers)"
     echo "  $0 -p 5 -s ../spmc_BBQ              # Specify BBQ implementation"
     echo "  $0 -p 9 -o 10000                    # 8 consumers, 10K ops per consumer"

@@ -8,7 +8,7 @@
 
 #define L -1 // ⊥ (empty cell)
 #define T -2 // ⊤ (dequeued cell)
-#define MAX_QUEUE_SIZE 1000000  // Increased for large clusters (up to 64 processes)
+#define MAX_QUEUE_SIZE 200000  // Increased for large clusters (up to 64 processes)
 #define MAX_ROW 10
 
 // Use uint64_t for atomic operations with MPI_Compare_and_swap
