@@ -373,6 +373,9 @@ run_microbenchmark() {
         fi
     fi
     
+    # Ensure executable has correct permissions (important for cluster environments)
+    chmod +x "${executable}"
+    
     # Run the benchmark
     local start_time=$(date +%s)
     
