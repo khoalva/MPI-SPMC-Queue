@@ -479,8 +479,8 @@ run_microbenchmark() {
         generate_csv_from_stdout "${SESSION_DIR}/microbench_stdout.txt" "${output_file}" "${spmc_name}" ${num_procs} ${ops}
     fi
     
-    # Generate enhanced summary CSV
-    generate_enhanced_csv "${output_file}" "${SESSION_DIR}/enhanced_summary.csv" "${spmc_name}" ${num_procs} ${ops} ${duration}
+    # Generate enhanced summary CSV from stdout (not from CSV file)
+    generate_csv_from_stdout "${SESSION_DIR}/microbench_stdout.txt" "${SESSION_DIR}/enhanced_summary.csv" "${spmc_name}" ${num_procs} ${ops}
     
     return 0
 }
