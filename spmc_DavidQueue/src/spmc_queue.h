@@ -8,7 +8,6 @@
 #define T -2 // ⊤ (dequeued cell)
 #define MAX_ROWS 100 // Maximum rows in ITEMS
 #define MAX_COLS 200000 // Maximum columns in ITEMS
-#define MAX_VALUE 1024 // Maximum value to enqueue
 
 // Queue structure using MPI wrapper library
 typedef struct {

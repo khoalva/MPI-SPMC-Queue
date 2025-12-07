@@ -123,11 +123,6 @@ void spmc_queue_destroy(spmc_queue_t *queue) {
 int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
     if (!spmc_queue_is_enqueuer(queue)) return -1;
     
-    if (value < 0 || value > MAX_VALUE) {
-        // fprintf(stderr, "Invalid enqueue value: %d\n", value);
-        return -1;
-    }
-    
     int target_rank = queue->queue_owner_rank;
     int val;
     size_t element_offset = (queue->eng_row * MAX_COLS + queue->tail);
