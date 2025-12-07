@@ -8,7 +8,7 @@
  * Micro Benchmark Library for SPMC Queue Performance Testing
  * 
  * This library implements proper micro benchmarking methodology:
- * - Fixed operations per consumer (e.g., 10000 dequeues)
+ * - Fixed operations per consumer (e.g., 5000 dequeues)
  * - Warmup phase to prefill queue (num_consumers * ops_per_consumer)
  * - Measure actual consumer execution time (no empty dequeue waits)
  * - High contention testing (queue always has items)
@@ -22,7 +22,7 @@
  */
 
 // Fixed operations per consumer (can be configured)
-#define DEFAULT_OPS_PER_CONSUMER 10000
+#define DEFAULT_OPS_PER_CONSUMER 5000
 
 // Micro benchmark configuration
 typedef struct {
