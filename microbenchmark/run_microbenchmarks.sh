@@ -331,10 +331,68 @@ build_microbenchmark_executable() {
         return 1
     fi
     
+    # Set executable permissions (important for cluster with shared filesystem)
     chmod +x "$exe_out"
+    
+    # Verify permissions were set correctly
+    if [ ! -x "$exe_out" ]; then
+        log_error "Failed to set executable permission on: $exe_out"
+        log_error "Current permissions: $(ls -l "$exe_out")"
+        return 1
+    fi
+    
     log_success "Microbenchmark executable built successfully: $exe_out"
+    log_info "Permissions: $(ls -l "$exe_out")"
     
     echo "$exe_out"
+    return 0
+}
+
+# Function to sync executable to all MPI hosts
+sync_executable_to_hosts() {
+    local executable="$1"
+    
+    if [[ -z "$MPI_HOSTS" ]]; then
+        return 0
+    fi
+    
+    log_info "Synchronizing executable to all MPI hosts: $MPI_HOSTS"
+    
+    # Convert comma-separated hosts to array
+    IFS=',' read -ra HOST_ARRAY <<< "$MPI_HOSTS"
+    
+    for host in "${HOST_ARRAY[@]}"; do
+        # Skip synchronizing to localhost/current host
+        if [[ "$host" != "$(hostname)" && "$host" != "localhost" && "$host" != "127.0.0.1" ]]; then
+            log_info "Syncing executable to $host..."
+            
+            # First create the directory on remote host
+            if ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" "mkdir -p '$(dirname "$executable")'" 2>/dev/null; then
+                # Then sync the executable
+                if rsync -aqz "$executable" "${host}:${executable}" 2>/dev/null; then
+                    log_success "Successfully synced executable to $host"
+                    # Set executable permissions on remote host
+                    ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" "chmod +x '$executable'" 2>/dev/null
+                else
+                    log_warning "rsync failed, trying scp..."
+                    # Fallback: try scp
+                    if scp -o ConnectTimeout=10 -o BatchMode=yes "$executable" "${host}:${executable}" 2>/dev/null; then
+                        log_success "Successfully synced executable to $host via scp"
+                        ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" "chmod +x '$executable'" 2>/dev/null
+                    else
+                        log_error "Failed to sync executable to $host (both rsync and scp failed)"
+                        log_warning "Benchmark may fail on $host"
+                    fi
+                fi
+            else
+                log_error "Failed to create directory on $host: $(dirname "$executable")"
+            fi
+        else
+            log_info "Skipping sync to local host: $host"
+        fi
+    done
+    
+    log_success "Executable synchronization completed"
     return 0
 }
 
@@ -544,6 +602,12 @@ EXECUTABLE=$(build_microbenchmark_executable "$SPMC_IMPL_PATH")
 if [[ $? -ne 0 ]] || [[ -z "$EXECUTABLE" ]]; then
     log_error "Failed to build microbenchmark executable"
     exit 1
+fi
+
+# Sync executable to all MPI hosts if running on cluster
+if [[ -n "$MPI_HOSTS" ]]; then
+    echo ""
+    sync_executable_to_hosts "$EXECUTABLE"
 fi
 
 echo ""
