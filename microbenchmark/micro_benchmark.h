@@ -2,6 +2,7 @@
 #define MICRO_BENCHMARK_H
 
 #include <sys/time.h>
+#include <stddef.h>
 #include <mpi.h>
 
 /**
@@ -179,6 +180,16 @@ void micro_bench_print_results(const micro_bench_ctx_t *ctx);
  * @return 0 on success, -1 on error
  */
 int micro_bench_export_csv(const micro_bench_ctx_t *ctx, const char *filename);
+
+/**
+ * Export results to CSV file with memory usage
+ * 
+ * @param ctx Benchmark context
+ * @param filename Output CSV file path
+ * @param queue_memory_bytes Queue memory usage in bytes
+ * @return 0 on success, -1 on error
+ */
+int micro_bench_export_csv_with_memory(const micro_bench_ctx_t *ctx, const char *filename, size_t queue_memory_bytes);
 
 /**
  * Cleanup and free resources

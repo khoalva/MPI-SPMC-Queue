@@ -564,6 +564,74 @@ int micro_bench_export_csv(const micro_bench_ctx_t *ctx, const char *filename) {
     return 0;
 }
 
+int micro_bench_export_csv_with_memory(const micro_bench_ctx_t *ctx, const char *filename, size_t queue_memory_bytes) {
+    if (!ctx || !filename || ctx->mpi_rank != 0) {
+        return -1;
+    }
+    
+    FILE *fp = fopen(filename, "w");
+    if (!fp) {
+        fprintf(stderr, "ERROR: Cannot open file %s for writing\n", filename);
+        return -1;
+    }
+    
+    const micro_bench_results_t *results = &ctx->global_results;
+    double memory_mb = queue_memory_bytes / (1024.0 * 1024.0);
+    
+    // Write summary
+    fprintf(fp, "# Micro Benchmark Results\n");
+    fprintf(fp, "# Test: %s\n", ctx->config.test_name);
+    fprintf(fp, "# Consumers: %d, Ops per consumer: %d\n", 
+            results->num_consumers, ctx->config.ops_per_consumer);
+    fprintf(fp, "# Memory Usage: %.2f MB\n", memory_mb);
+    fprintf(fp, "\n");
+    
+    fprintf(fp, "Metric,Value,Unit\n");
+    fprintf(fp, "Total Operations,%ld,operations\n", results->total_operations);
+    fprintf(fp, "Total Time,%.6f,seconds\n", results->total_time_sec);
+    fprintf(fp, "Total Throughput,%.2f,ops/sec\n", results->total_throughput_ops_per_sec);
+    fprintf(fp, "Avg Consumer Time,%.6f,seconds\n", results->avg_consumer_time_sec);
+    fprintf(fp, "Min Consumer Time,%.6f,seconds\n", results->min_consumer_time_sec);
+    fprintf(fp, "Max Consumer Time,%.6f,seconds\n", results->max_consumer_time_sec);
+    fprintf(fp, "Std Dev Consumer Time,%.6f,seconds\n", results->std_dev_consumer_time_sec);
+    fprintf(fp, "Memory Usage,%.2f,MB\n", memory_mb);
+    
+    // Write per-process details if available
+    if (results->process_results) {
+        fprintf(fp, "\n# Per-Process Details\n");
+        fprintf(fp, "Rank,Role,Operations,Time_sec,Throughput_ops_per_sec,Start_sec,Finish_sec\n");
+        
+        // Write producer (rank 0)
+        if (results->process_results[0].operations_completed > 0) {
+            micro_process_result_t *pr = &results->process_results[0];
+            fprintf(fp, "%d,Producer,%ld,%.6f,%.2f,%.6f,%.6f\n",
+                   pr->rank,
+                   pr->operations_completed,
+                   pr->execution_time_sec,
+                   pr->throughput_ops_per_sec,
+                   pr->start_time_sec,
+                   pr->finish_time_sec);
+        }
+        
+        // Write consumers
+        for (int i = 1; i < ctx->mpi_size; i++) {
+            micro_process_result_t *pr = &results->process_results[i];
+            fprintf(fp, "%d,Consumer,%ld,%.6f,%.2f,%.6f,%.6f\n",
+                   pr->rank,
+                   pr->operations_completed,
+                   pr->execution_time_sec,
+                   pr->throughput_ops_per_sec,
+                   pr->start_time_sec,
+                   pr->finish_time_sec);
+        }
+    }
+    
+    fclose(fp);
+    printf("Results exported to: %s\n", filename);
+    
+    return 0;
+}
+
 /**
  * Cleanup and free resources
  */

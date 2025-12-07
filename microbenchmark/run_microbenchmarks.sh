@@ -469,9 +469,11 @@ generate_csv_from_stdout() {
     local avg_consumer_time=$(echo "scale=6; $sum_time / $count" | bc)
     local avg_latency_ms=$(echo "scale=6; ($avg_consumer_time / $consumer_ops) * 1000" | bc)
     
-    # Get memory usage
-    local memory_kb=$(grep -oP 'Memory.*:\s*\K\d+' "$stdout_file" | head -1)
-    local memory_mb=$(echo "scale=2; ${memory_kb:-0} / 1024" | bc)
+    # Get memory usage - extract from "Queue Memory Usage: 7.63 MB (8000000 bytes)"
+    local memory_mb=$(grep -oP 'Queue Memory Usage:\s*\K[\d.]+' "$stdout_file" | head -1)
+    if [ -z "$memory_mb" ]; then
+        memory_mb="0.0"
+    fi
     
     # Write CSV in format similar to benchmark.c
     {
@@ -517,8 +519,8 @@ generate_enhanced_csv() {
     # Calculate latency
     local avg_latency_ms=$(echo "$avg_consumer_time $ops_per_consumer" | awk '{if($2>0) printf "%.6f", ($1/$2)*1000; else print "0.0"}')
     
-    # Get memory usage
-    local memory_mb=$(grep -i "Memory" "$source_csv" | cut -d',' -f2 | tr -d ' ')
+    # Get memory usage - only match CSV data line, not comments
+    local memory_mb=$(grep -i "^Memory Usage," "$source_csv" | cut -d',' -f2 | tr -d ' ')
     if [ -z "$memory_mb" ] || [ "$memory_mb" = "N/A" ]; then
         memory_mb="0.0"
     fi

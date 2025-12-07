@@ -203,12 +203,17 @@ int main(int argc, char *argv[]) {
     if (mpi_rank == 0) {
         micro_bench_print_results(&bench_ctx);
         
-        // Export to CSV
+        // Get queue memory usage
+        size_t queue_memory_bytes = spmc_queue_get_capacity_bytes(&queue);
+        double queue_memory_mb = queue_memory_bytes / (1024.0 * 1024.0);
+        printf("Queue Memory Usage: %.2f MB (%zu bytes)\n", queue_memory_mb, queue_memory_bytes);
+        
+        // Export to CSV with memory info
         char filename[256];
         snprintf(filename, sizeof(filename), 
                  "microbench_spmc_%dprocs_%dops.csv", 
                  mpi_size, ops_per_consumer);
-        micro_bench_export_csv(&bench_ctx, filename);
+        micro_bench_export_csv_with_memory(&bench_ctx, filename, queue_memory_bytes);
     }
     
     // Cleanup
