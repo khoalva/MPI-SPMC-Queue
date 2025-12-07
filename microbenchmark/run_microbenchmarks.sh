@@ -523,12 +523,22 @@ generate_csv_from_stdout() {
         fi
     done <<< "$consumer_times"
     
+    local sum_consumer_throughput=0
     while IFS= read -r throughput; do
-        total_consumer_throughput=$(echo "$total_consumer_throughput + $throughput" | bc)
+        sum_consumer_throughput=$(echo "$sum_consumer_throughput + $throughput" | bc)
     done <<< "$consumer_throughputs"
     
+    # Calculate average consumer throughput (not total)
+    local avg_consumer_throughput=$(echo "scale=2; $sum_consumer_throughput / $count" | bc)
+    
     local avg_consumer_time=$(echo "scale=6; $sum_time / $count" | bc)
-    local avg_latency_ms=$(echo "scale=6; ($avg_consumer_time / $consumer_ops) * 1000" | bc)
+    local avg_latency_ms=$(echo "scale=6; ($avg_consumer_time / $ops_per_consumer) * 1000" | bc)
+    
+    # Calculate total operations in measurement phase (2A + 2B)
+    # Phase 2A: Producer enqueues 2N items (2 * num_consumers * ops_per_consumer)
+    # Phase 2B: Consumers dequeue N items (num_consumers * ops_per_consumer)
+    # Total = 2N + N = 3N items
+    local total_ops=$((3 * num_consumers * ops_per_consumer))
     
     # Get memory usage - extract from "Queue Memory Usage: 7.63 MB (8000000 bytes)"
     local memory_mb=$(grep -oP 'Queue Memory Usage:\s*\K[\d.]+' "$stdout_file" | head -1)
@@ -538,8 +548,8 @@ generate_csv_from_stdout() {
     
     # Write CSV in format similar to benchmark.c
     {
-        echo "Test_Name,Queue_Implementation,MPI_Size,Num_Consumers,Ops_Per_Consumer,Total_Operations,Producer_Time_Sec,Producer_Throughput_Ops_Per_Sec,Avg_Consumer_Time_Sec,Min_Consumer_Time_Sec,Max_Consumer_Time_Sec,Total_Consumer_Throughput_Ops_Per_Sec,Avg_Latency_Ms,Memory_Usage_MB"
-        echo "\"Micro Benchmark\",\"${queue_name}\",${num_procs},${num_consumers},${ops_per_consumer},$((num_consumers * consumer_ops)),${producer_time:-0.0},${producer_throughput:-0.0},${avg_consumer_time:-0.0},${min_time},${max_time},${total_consumer_throughput:-0.0},${avg_latency_ms:-0.0},${memory_mb:-0.0}"
+        echo "Test_Name,Queue_Implementation,MPI_Size,Num_Consumers,Ops_Per_Consumer,Total_Operations,Producer_Time_Sec,Enqueue_Throughput_Ops_Per_Sec,Avg_Consumer_Time_Sec,Min_Consumer_Time_Sec,Max_Consumer_Time_Sec,Dequeue_Throughput_Ops_Per_Sec,Avg_Latency_Ms,Memory_Usage_MB"
+        echo "\"Micro Benchmark\",\"${queue_name}\",${num_procs},${num_consumers},${ops_per_consumer},${total_ops},${producer_time:-0.0},${producer_throughput:-0.0},${avg_consumer_time:-0.0},${min_time},${max_time},${avg_consumer_throughput:-0.0},${avg_latency_ms:-0.0},${memory_mb:-0.0}"
     } > "$output_csv"
     
     log_success "Generated CSV from stdout: $output_csv"
