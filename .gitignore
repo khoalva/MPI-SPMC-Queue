@@ -45,7 +45,7 @@ spmc_benchmark
 benchmark/results/*.csv
 benchmark/logs/*.log
 *.csv
-
+*.txt
 # OS specific files
 .DS_Store
 Thumbs.db
