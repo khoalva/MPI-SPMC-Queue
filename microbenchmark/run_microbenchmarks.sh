@@ -549,15 +549,14 @@ generate_csv_from_stdout() {
         fi
     done <<< "$consumer_times"
     
-    local sum_consumer_throughput=0
-    while IFS= read -r throughput; do
-        sum_consumer_throughput=$(echo "$sum_consumer_throughput + $throughput" | bc)
-    done <<< "$consumer_throughputs"
-    
-    # Calculate average consumer throughput (not total)
-    local avg_consumer_throughput=$(echo "scale=2; $sum_consumer_throughput / $count" | bc)
-    
+    # Calculate average consumer time first
     local avg_consumer_time=$(echo "scale=6; $sum_time / $count" | bc)
+    
+    # Calculate per-consumer throughput from consumer time (ensures consistency)
+    # Per-consumer throughput = ops_per_consumer / avg_consumer_time
+    local avg_consumer_throughput=$(echo "scale=2; $ops_per_consumer / $avg_consumer_time" | bc)
+    
+    # Calculate latency per operation (in milliseconds)
     local avg_latency_ms=$(echo "scale=6; ($avg_consumer_time / $ops_per_consumer) * 1000" | bc)
     
     # Calculate total operations in measurement phase (2A + 2B)
