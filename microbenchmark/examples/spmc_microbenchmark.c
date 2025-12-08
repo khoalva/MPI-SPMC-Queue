@@ -34,14 +34,41 @@ static int enqueue_wrapper(void *queue, int value) {
     return spmc_queue_enqueue((spmc_queue_t *)queue, value);
 }
 
+// Global buffer for batch dequeue - allocated per consumer
+static int *dequeue_buffer = NULL;
+static int dequeue_buffer_size = 0;
+static int dequeue_buffer_index = 0;
+static int dequeue_buffer_count = 0;
+
+// Dequeue wrapper that supports batch operations
+// Returns number of items dequeued (can be > 1 for batch-supporting queues)
 static int dequeue_wrapper(void *queue, int *value) {
-    int out_data[1];  // Buffer for dequeue
-    int result = spmc_queue_dequeue((spmc_queue_t *)queue, out_data, 1);
-    if (result > 0) {
-        *value = out_data[0];
-        return 1; // Success
+    spmc_queue_t *q = (spmc_queue_t *)queue;
+    
+    // Initialize buffer on first call
+    if (dequeue_buffer == NULL) {
+        dequeue_buffer_size = spmc_queue_get_batch_size(q);
+        dequeue_buffer = malloc(dequeue_buffer_size * sizeof(int));
+        if (!dequeue_buffer) {
+            return -1;
+        }
+        dequeue_buffer_count = 0;
+        dequeue_buffer_index = 0;
     }
-    return 0; // Empty or error
+    
+    // If buffer is empty, fetch new batch
+    if (dequeue_buffer_index >= dequeue_buffer_count) {
+        dequeue_buffer_count = spmc_queue_dequeue(q, dequeue_buffer, dequeue_buffer_size);
+        dequeue_buffer_index = 0;
+        
+        if (dequeue_buffer_count <= 0) {
+            return 0; // Queue empty or error
+        }
+    }
+    
+    // Return one item from buffer
+    *value = dequeue_buffer[dequeue_buffer_index++];
+    return 1; // Success - return 1 item
 }
 
 static void print_usage(const char *program_name) {
@@ -214,6 +241,12 @@ int main(int argc, char *argv[]) {
                  "microbench_spmc_%dprocs_%dops.csv", 
                  mpi_size, ops_per_consumer);
         micro_bench_export_csv_with_memory(&bench_ctx, filename, queue_memory_bytes);
+    }
+    
+    // Cleanup dequeue buffer
+    if (dequeue_buffer) {
+        free(dequeue_buffer);
+        dequeue_buffer = NULL;
     }
     
     // Cleanup
