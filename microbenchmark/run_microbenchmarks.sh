@@ -719,8 +719,9 @@ if [ -f "${csv_file}" ]; then
         calc_stats() {
             local values="$1"
             
-            # Filter out empty lines and invalid values
-            values=$(echo "$values" | grep -v '^$' | grep -E '^[0-9]+\.?[0-9]*$')
+            # Filter out empty lines and keep valid numbers (including .xxx format)
+            # Accept formats: 123, 123.456, .456, 0.456
+            values=$(echo "$values" | grep -v '^$' | grep -E '^\.?[0-9]+\.?[0-9]*$')
             
             if [ -z "$values" ]; then
                 echo "0.0 0.0"
