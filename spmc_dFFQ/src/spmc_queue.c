@@ -209,7 +209,7 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
             // printf("[DEQUEUE][rank %d] Waiting for producer: gap=%d < rank=%d\n",
             //        mpi_get_rank(&queue->mpi_ctx), gap, rank);
             wait_count++;
-            usleep(10);
+            // usleep(10);
         }
     }
     
