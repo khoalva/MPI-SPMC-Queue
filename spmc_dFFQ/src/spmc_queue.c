@@ -156,64 +156,74 @@ int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
     int retry_count = 0;
     int wait_count = 0;
     int data = -1;
+    int no_op_val = 0;
     
-    // Line 2: rank ← FetchInc(head)
+    // Line 1: rank ← FetchInc(head)
     MPI_TRY(mpi_fetch_and_op(&one, &rank, MPI_INT, 0, 0, MPI_SUM, &queue->win_head));
     
     retry_count++;
     int pos = rank % queue->size;
     MPI_Aint disp = pos * sizeof(spmc_cell_t);
     
-    // Line 4: while ¬success do
+    // Line 2: success ← FALSE
+    // Line 3: while ¬success do
     while (!success && retry_count < MAX_DEQUEUE_RETRIES && wait_count < 10) {
-        // Line 5: c ← ReadCompositeSnap(cells[rank(mod N)])
-        spmc_cell_t c;
-        spmc_cell_t no_op_val = {0};
-        MPI_TRY(mpi_get_accumulate(&no_op_val, 3, MPI_INT,
-                                    &c, 3, MPI_INT,
-                                    0, disp, 3, MPI_INT,
-                                    MPI_NO_OP, &queue->win_cells));
+        // Line 4: cellRank ← AtomicRead(cells[rank(mod N)].rank)
+        int cellRank;
+        MPI_Aint rank_disp = disp + offsetof(spmc_cell_t, rank);
+        MPI_TRY(mpi_fetch_and_op(&no_op_val, &cellRank, MPI_INT, 0, rank_disp, MPI_NO_OP, &queue->win_cells));
         
-        // printf("[DEQUEUE][rank %d] Read cell at pos %d: cell.rank=%d, cell.data=%d, cell.gap=%d\n",
-        //        mpi_get_rank(&queue->mpi_ctx), pos, c.rank, c.data, c.gap);
-        
-        // Line 6: if c.rank = rank then
-        if (c.rank == rank) {
-            // Line 7: data ← c.data
-            data = c.data;
+        // Line 5: if cellRank = rank then
+        if (cellRank == rank) {
+            // Line 6: data ← Read(cells[rank(mod N)].data)
+            MPI_Aint data_disp = disp + offsetof(spmc_cell_t, data);
+            MPI_TRY(mpi_get(&data, sizeof(int), MPI_BYTE, 0, data_disp, &queue->win_cells));
             
-            // Line 8: AtomicWrite(cells[rank(mod N)].rank, −1)
-            MPI_Aint rank_disp = disp + offsetof(spmc_cell_t, rank);
+            // Line 7: AtomicWrite(cells[rank(mod N)].rank, −1)
             int empty_val = EMPTY_CELL;
             MPI_TRY(mpi_accumulate(&empty_val, 1, MPI_INT, 0, rank_disp, MPI_REPLACE, &queue->win_cells));
             
             // printf("[DEQUEUE][rank %d] SUCCESS: Dequeued data=%d at pos=%d, rank=%d (waited %d times)\n", 
             //        mpi_get_rank(&queue->mpi_ctx), data, pos, rank, wait_count);
             
-            // Line 9: success ← TRUE
+            // Line 8: success ← TRUE
             success = true;
-        } else if(c.gap >= rank) {
-
-            // Line 15: rank ← FetchInc(head) - Fetch new rank and restart loop
-            MPI_TRY(mpi_fetch_and_op(&one, &rank, MPI_INT, 0, 0, MPI_SUM, &queue->win_head));
-            pos = rank % queue->size;
-            disp = pos * sizeof(spmc_cell_t);
-            retry_count++;
-            wait_count = 0;
-            
-            // printf("[DEQUEUE][rank %d] Gap detected! Fetching new rank=%d, pos=%d (retry #%d)\n", 
-            //        mpi_get_rank(&queue->mpi_ctx), rank, pos, retry_count);
-
         } else {
-            // Line 22: wait()
-            // printf("[DEQUEUE][rank %d] Waiting for producer: gap=%d < rank=%d\n",
-            //        mpi_get_rank(&queue->mpi_ctx), gap, rank);
-            wait_count++;
-            // usleep(10);
+            // Line 10: gap ← AtomicRead(cells[rank(mod N)].gap)
+            int gap;
+            MPI_Aint gap_disp = disp + offsetof(spmc_cell_t, gap);
+            MPI_TRY(mpi_fetch_and_op(&no_op_val, &gap, MPI_INT, 0, gap_disp, MPI_NO_OP, &queue->win_cells));
+            
+            // Line 11: if gap ≥ rank then
+            if (gap >= rank) {
+                // Line 12: cellRank ← AtomicRead(cells[rank(mod N)].rank)
+                MPI_TRY(mpi_fetch_and_op(&no_op_val, &cellRank, MPI_INT, 0, rank_disp, MPI_NO_OP, &queue->win_cells));
+                
+                // Line 13: if cellRank ≠ rank then
+                if (cellRank != rank) {
+                    // Line 14: rank ← FetchInc(head)
+                    MPI_TRY(mpi_fetch_and_op(&one, &rank, MPI_INT, 0, 0, MPI_SUM, &queue->win_head));
+                    pos = rank % queue->size;
+                    disp = pos * sizeof(spmc_cell_t);
+                    retry_count++;
+                    wait_count = 0;
+                    
+                    // printf("[DEQUEUE][rank %d] Gap detected! Fetching new rank=%d, pos=%d (retry #%d)\n", 
+                    //        mpi_get_rank(&queue->mpi_ctx), rank, pos, retry_count);
+                } else {
+                    // Line 16: wait()
+                    wait_count++;
+                    // usleep(10);
+                }
+            } else {
+                // Line 19: wait()
+                wait_count++;
+                // usleep(10);
+            }
         }
     }
     
-    // Line 26: return data
+    // Line 24: return data
     if (data == -1) {
         return 0;  // No items dequeued
     } else {
