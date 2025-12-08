@@ -23,7 +23,7 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SESSION_DIR="${RESULTS_DIR}/session_${TIMESTAMP}"
 
 # Default parameters
-OPS_PER_CONSUMER=1000  # Reduced for faster micro benchmark execution
+OPS_PER_CONSUMER=10000  # Default operations per consumer for reliable measurements
 NUM_PROCESSES=5  # Default: 1 producer + 4 consumers
 MPI_HOSTS=""
 SPMC_PATH=""
@@ -40,7 +40,7 @@ usage() {
     echo -e "${BLUE}Usage:${NC} $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  -o OPS        Operations per consumer (default: 1000)"
+    echo "  -o OPS        Operations per consumer (default: 10000)"
     echo "  -p PROCS      Total number of MPI processes (default: 5 = 1 producer + 4 consumers)"
     echo "  -H HOSTS      Comma-separated list of MPI hosts/nodes"
     echo "                Example: -H node1,node2,node3"
@@ -53,13 +53,13 @@ usage() {
     echo "  -h            Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0                                  # Auto-detect queue, 5 processes (1+4), 1K ops"
+    echo "  $0                                  # Auto-detect queue, 5 processes (1+4), 10K ops"
     echo "  $0 -p 9                             # Run with 9 processes (1 producer + 8 consumers)"
     echo "  $0 -p 5 -s ../spmc_BBQ              # Specify BBQ implementation"
-    echo "  $0 -p 9 -o 10000                    # 8 consumers, 10K ops per consumer"
+    echo "  $0 -p 9 -o 50000                    # 8 consumers, 50K ops per consumer"
     echo "  $0 -p 5 -H node1,node2              # Use 5 processes across 2 nodes"
     echo "  $0 -p 9 -s ../spmc_dFFQ -v          # Verbose output with dFFQ"
-    echo "  $0 -r 5 -p 5 -o 1000                # Repeat benchmark 5 times"
+    echo "  $0 -r 5 -p 5 -o 10000               # Repeat benchmark 5 times"
     echo ""
     echo "Note: Process count = 1 producer + N consumers"
     echo "      Example: -p 5 means 1 producer + 4 consumers"
