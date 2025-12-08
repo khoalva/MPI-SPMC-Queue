@@ -28,7 +28,8 @@ NUM_PROCESSES=5  # Default: 1 producer + 4 consumers
 MPI_HOSTS=""
 SPMC_PATH=""
 VERBOSE=false
-TIMEOUT=30  # Default timeout: 30 seconds 
+TIMEOUT=30  # Default timeout: 30 seconds
+REPEAT=1  # Number of times to repeat the benchmark 
 
 # Usage function
 usage() {
@@ -45,7 +46,9 @@ usage() {
     echo "                Example: -H node1,node2,node3"
     echo "  -s PATH       Path to SPMC implementation directory"
     echo "                (if not specified, will auto-detect or prompt)"
-    echo "  -t SECONDS    Timeout for benchmark execution (default: 30 seconds)"
+    echo "  -t SECONDS    Timeout for each benchmark run (default: 30 seconds)"
+    echo "                Note: Applies to each individual run, not total time"
+    echo "  -r REPEAT     Number of times to repeat the benchmark (default: 1)"
     echo "  -v            Enable verbose output"
     echo "  -h            Show this help message"
     echo ""
@@ -56,6 +59,7 @@ usage() {
     echo "  $0 -p 9 -o 10000                    # 8 consumers, 10K ops per consumer"
     echo "  $0 -p 5 -H node1,node2              # Use 5 processes across 2 nodes"
     echo "  $0 -p 9 -s ../spmc_dFFQ -v          # Verbose output with dFFQ"
+    echo "  $0 -r 5 -p 5 -o 1000                # Repeat benchmark 5 times"
     echo ""
     echo "Note: Process count = 1 producer + N consumers"
     echo "      Example: -p 5 means 1 producer + 4 consumers"
@@ -64,13 +68,14 @@ usage() {
 }
 
 # Parse command line arguments
-while getopts "o:p:H:s:t:vh" opt; do
+while getopts "o:p:H:s:t:r:vh" opt; do
     case $opt in
         o) OPS_PER_CONSUMER=$OPTARG ;;
         p) NUM_PROCESSES=$OPTARG ;;
         H) MPI_HOSTS=$OPTARG ;;
         s) SPMC_PATH=$OPTARG ;;
         t) TIMEOUT=$OPTARG ;;
+        r) REPEAT=$OPTARG ;;
         v) VERBOSE=true ;;
         h) usage ;;
         *) usage ;;
@@ -197,6 +202,8 @@ echo -e "${BLUE}Configuration:${NC}"
 echo "  SPMC Implementation:      ${SPMC_NAME}"
 echo "  Operations per consumer:  ${OPS_PER_CONSUMER}"
 echo "  Total processes:          ${NUM_PROCESSES} (1 producer + ${NUM_CONSUMERS} consumers)"
+echo "  Repeat count:             ${REPEAT}"
+echo "  Timeout per run:          ${TIMEOUT} seconds"
 if [ ! -z "${MPI_HOSTS}" ]; then
     echo "  MPI hosts:                ${MPI_HOSTS}"
 fi
@@ -212,6 +219,7 @@ echo "Micro Benchmark Session: ${TIMESTAMP}" > "${LOG_FILE}"
 echo "SPMC Implementation: ${SPMC_NAME}" >> "${LOG_FILE}"
 echo "Operations per consumer: ${OPS_PER_CONSUMER}" >> "${LOG_FILE}"
 echo "Total processes: ${NUM_PROCESSES} (1 producer + ${NUM_CONSUMERS} consumers)" >> "${LOG_FILE}"
+echo "Repeat count: ${REPEAT}" >> "${LOG_FILE}"
 if [ ! -z "${MPI_HOSTS}" ]; then
     echo "MPI hosts: ${MPI_HOSTS}" >> "${LOG_FILE}"
 fi
@@ -402,11 +410,12 @@ run_microbenchmark() {
     local num_procs="$2"
     local ops="$3"
     local spmc_name="$4"
+    local run_number="${5:-1}"
     
     local num_consumers=$((num_procs - 1))
-    local output_file="${SESSION_DIR}/microbench_${spmc_name}_${num_consumers}consumers_${ops}ops.csv"
+    local output_file="${SESSION_DIR}/microbench_${spmc_name}_${num_consumers}consumers_${ops}ops_run${run_number}.csv"
     
-    log_info "Running microbenchmark: ${spmc_name} with ${num_consumers} consumers (${num_procs} processes)"
+    log_info "Running microbenchmark (run ${run_number}/${REPEAT}): ${spmc_name} with ${num_consumers} consumers (${num_procs} processes)"
     
     # Build MPI command with timeout
     local mpi_cmd="timeout ${TIMEOUT}s mpirun -np ${num_procs}"
@@ -442,7 +451,7 @@ run_microbenchmark() {
     fi
     
     # Run and capture exit code
-    ${mpi_cmd} "${executable}" ${ops} > "${SESSION_DIR}/microbench_stdout.txt" 2>&1
+    ${mpi_cmd} "${executable}" ${ops} > "${SESSION_DIR}/microbench_stdout_run${run_number}.txt" 2>&1
     local exit_code=$?
     
     local end_time=$(date +%s)
@@ -451,20 +460,20 @@ run_microbenchmark() {
     # Check for timeout (exit code 124 from timeout command)
     if [ $exit_code -eq 124 ]; then
         log_error "Benchmark timed out after ${TIMEOUT} seconds"
-        echo "TIMEOUT: ${spmc_name} (${num_consumers} consumers, ${ops} ops) - ${TIMEOUT}s" >> "${LOG_FILE}"
+        echo "TIMEOUT [Run ${run_number}]: ${spmc_name} (${num_consumers} consumers, ${ops} ops) - ${TIMEOUT}s" >> "${LOG_FILE}"
         return 124
     fi
     
     # Check for other errors
     if [ $exit_code -ne 0 ]; then
         log_error "Benchmark failed with exit code: ${exit_code}"
-        echo "FAILED: ${spmc_name} (${num_consumers} consumers, ${ops} ops) - exit code ${exit_code}" >> "${LOG_FILE}"
-        cat "${SESSION_DIR}/microbench_stdout.txt" | tail -20
+        echo "FAILED [Run ${run_number}]: ${spmc_name} (${num_consumers} consumers, ${ops} ops) - exit code ${exit_code}" >> "${LOG_FILE}"
+        cat "${SESSION_DIR}/microbench_stdout_run${run_number}.txt" | tail -20
         return $exit_code
     fi
     
     log_success "Completed in ${duration}s"
-    echo "SUCCESS: ${spmc_name} (${num_consumers} consumers, ${ops} ops) - ${duration}s" >> "${LOG_FILE}"
+    echo "SUCCESS [Run ${run_number}]: ${spmc_name} (${num_consumers} consumers, ${ops} ops) - ${duration}s" >> "${LOG_FILE}"
     
     # Look for generated CSV and rename it
     local csv_file="microbench_spmc_${num_procs}procs_${ops}ops.csv"
@@ -476,11 +485,28 @@ run_microbenchmark() {
         log_success "Results saved to: ${output_file}"
     else
         log_warning "CSV file not found, generating from stdout..."
-        generate_csv_from_stdout "${SESSION_DIR}/microbench_stdout.txt" "${output_file}" "${spmc_name}" ${num_procs} ${ops}
+        generate_csv_from_stdout "${SESSION_DIR}/microbench_stdout_run${run_number}.txt" "${output_file}" "${spmc_name}" ${num_procs} ${ops}
     fi
     
-    # Generate enhanced summary CSV from stdout (not from CSV file)
-    generate_csv_from_stdout "${SESSION_DIR}/microbench_stdout.txt" "${SESSION_DIR}/enhanced_summary.csv" "${spmc_name}" ${num_procs} ${ops}
+    # Append to enhanced summary CSV (consolidated across all runs)
+    local enhanced_summary="${SESSION_DIR}/enhanced_summary.csv"
+    local temp_csv="${SESSION_DIR}/temp_run${run_number}.csv"
+    
+    # Generate CSV for this run
+    generate_csv_from_stdout "${SESSION_DIR}/microbench_stdout_run${run_number}.txt" "${temp_csv}" "${spmc_name}" ${num_procs} ${ops}
+    
+    # If this is the first run, copy header and data
+    if [ ${run_number} -eq 1 ]; then
+        cp "${temp_csv}" "${enhanced_summary}"
+        log_success "Created enhanced summary: ${enhanced_summary}"
+    else
+        # For subsequent runs, append only the data row (skip header)
+        tail -n +2 "${temp_csv}" >> "${enhanced_summary}"
+        log_success "Appended run ${run_number} to enhanced summary"
+    fi
+    
+    # Clean up temp file
+    rm -f "${temp_csv}"
     
     return 0
 }
@@ -629,57 +655,155 @@ echo ""
 log_info "Starting microbenchmark execution..."
 echo ""
 
-# Run the microbenchmark
-if run_microbenchmark "$EXECUTABLE" "$NUM_PROCESSES" "$OPS_PER_CONSUMER" "$SPMC_NAME"; then
+# Run the microbenchmark multiple times
+SUCCESS_COUNT=0
+FAILED_COUNT=0
+
+for ((run=1; run<=REPEAT; run++)); do
+    if [ $REPEAT -gt 1 ]; then
+        echo ""
+        log_info "========== Run ${run}/${REPEAT} =========="
+        echo ""
+    fi
+    
+    if run_microbenchmark "$EXECUTABLE" "$NUM_PROCESSES" "$OPS_PER_CONSUMER" "$SPMC_NAME" "$run"; then
+        SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+    else
+        FAILED_COUNT=$((FAILED_COUNT + 1))
+        log_warning "Run ${run} failed, continuing with remaining runs..."
+    fi
+done
+
+# Check if all runs completed successfully
+if [ $SUCCESS_COUNT -eq $REPEAT ]; then
     echo ""
-    log_success "Microbenchmark completed successfully!"
+    log_success "All ${REPEAT} microbenchmark run(s) completed successfully!"
+    echo ""
+elif [ $SUCCESS_COUNT -gt 0 ]; then
+    echo ""
+    log_warning "${SUCCESS_COUNT} out of ${REPEAT} runs completed successfully (${FAILED_COUNT} failed)"
+    echo ""
+else
+    log_error "All microbenchmark runs failed"
+    exit 1
+fi
+
+# Display results summary - use enhanced_summary.csv which contains all runs
+csv_file="${SESSION_DIR}/enhanced_summary.csv"
+    
+if [ -f "${csv_file}" ]; then
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}Results Summary${NC}"
+    echo -e "${GREEN}========================================${NC}"
     echo ""
     
-    # Display results summary
-    csv_file="${SESSION_DIR}/microbench_${SPMC_NAME}_${NUM_CONSUMERS}consumers_${OPS_PER_CONSUMER}ops.csv"
+    echo "SPMC Implementation:     ${SPMC_NAME}"
+    echo "Number of Consumers:     ${NUM_CONSUMERS}"
+    echo "Operations per Consumer: ${OPS_PER_CONSUMER}"
+    echo "Timeout per run:         ${TIMEOUT} seconds"
+    echo "Successful Runs:         ${SUCCESS_COUNT}/${REPEAT}"
+    echo ""
     
-    if [ -f "${csv_file}" ]; then
-        echo -e "${GREEN}========================================${NC}"
-        echo -e "${GREEN}Results Summary${NC}"
-        echo -e "${GREEN}========================================${NC}"
+    if [ $REPEAT -gt 1 ]; then
+        # Calculate statistics across multiple runs
+        log_info "Calculating statistics across ${SUCCESS_COUNT} successful runs..."
+        
+        # Extract metrics from CSV (skip header)
+        local producer_times=$(tail -n +2 "$csv_file" | cut -d',' -f7)
+        local enqueue_throughputs=$(tail -n +2 "$csv_file" | cut -d',' -f8)
+        local avg_consumer_times=$(tail -n +2 "$csv_file" | cut -d',' -f9)
+        local dequeue_throughputs=$(tail -n +2 "$csv_file" | cut -d',' -f12)
+        local latencies=$(tail -n +2 "$csv_file" | cut -d',' -f13)
+        
+        # Calculate mean and std dev for each metric
+        calc_stats() {
+            local values="$1"
+            local count=$(echo "$values" | wc -l)
+            local sum=$(echo "$values" | awk '{sum+=$1} END {print sum}')
+            local mean=$(echo "scale=6; $sum / $count" | bc)
+            
+            local variance=0
+            while IFS= read -r val; do
+                local diff=$(echo "scale=6; $val - $mean" | bc)
+                local sq=$(echo "scale=6; $diff * $diff" | bc)
+                variance=$(echo "scale=6; $variance + $sq" | bc)
+            done <<< "$values"
+            
+            variance=$(echo "scale=6; $variance / $count" | bc)
+            local stddev=$(echo "scale=6; sqrt($variance)" | bc)
+            
+            echo "$mean $stddev"
+        }
+        
+        read producer_mean producer_std <<< $(calc_stats "$producer_times")
+        read enqueue_mean enqueue_std <<< $(calc_stats "$enqueue_throughputs")
+        read consumer_mean consumer_std <<< $(calc_stats "$avg_consumer_times")
+        read dequeue_mean dequeue_std <<< $(calc_stats "$dequeue_throughputs")
+        read latency_mean latency_std <<< $(calc_stats "$latencies")
+        
+        echo "Producer Time (sec):"
+        printf "  Mean:   %.6f ± %.6f\n" $producer_mean $producer_std
+        echo ""
+        echo "Enqueue Throughput (ops/sec):"
+        printf "  Mean:   %.2f ± %.2f\n" $enqueue_mean $enqueue_std
+        echo ""
+        echo "Avg Consumer Time (sec):"
+        printf "  Mean:   %.6f ± %.6f\n" $consumer_mean $consumer_std
+        echo ""
+        echo "Dequeue Throughput (ops/sec):"
+        printf "  Mean:   %.2f ± %.2f\n" $dequeue_mean $dequeue_std
+        echo ""
+        echo "Avg Latency (ms):"
+        printf "  Mean:   %.6f ± %.6f\n" $latency_mean $latency_std
         echo ""
         
+        echo -e "${BLUE}Aggregate Results:${NC} ${csv_file}"
+    else
+        # Single run - show individual metrics
         # Extract key metrics from CSV
-        throughput=$(grep "Total.*Throughput" "${csv_file}" | cut -d',' -f2)
-        avg_time=$(grep "Average Consumer Time" "${csv_file}" | cut -d',' -f2)
-        producer_time=$(grep "Producer.*Time" "${csv_file}" | cut -d',' -f2)
+        local producer_time=$(tail -n +2 "${csv_file}" | cut -d',' -f7)
+        local enqueue_throughput=$(tail -n +2 "${csv_file}" | cut -d',' -f8)
+        local avg_consumer_time=$(tail -n +2 "${csv_file}" | cut -d',' -f9)
+        local dequeue_throughput=$(tail -n +2 "${csv_file}" | cut -d',' -f12)
+        local avg_latency=$(tail -n +2 "${csv_file}" | cut -d',' -f13)
         
-        echo "SPMC Implementation:    ${SPMC_NAME}"
-        echo "Number of Consumers:    ${NUM_CONSUMERS}"
-        echo "Operations per Consumer: ${OPS_PER_CONSUMER}"
-        echo "Timeout Setting:        ${TIMEOUT} seconds"
-        echo ""
-        
-        if [ ! -z "${throughput}" ] && [ "${throughput}" != "N/A" ]; then
-            printf "Total Throughput:       %.2f ops/sec\n" ${throughput}
+        if [ ! -z "${enqueue_throughput}" ] && [ "${enqueue_throughput}" != "N/A" ]; then
+            printf "Enqueue Throughput:     %.2f ops/sec\n" ${enqueue_throughput}
         fi
-        if [ ! -z "${avg_time}" ] && [ "${avg_time}" != "N/A" ]; then
-            printf "Avg Consumer Time:      %.6f sec\n" ${avg_time}
-            # Calculate latency
-            latency_ms=$(echo "$avg_time $OPS_PER_CONSUMER" | awk '{if($2>0) printf "%.6f", ($1/$2)*1000}')
-            printf "Avg Latency:            %.6f ms\n" ${latency_ms}
+        if [ ! -z "${dequeue_throughput}" ] && [ "${dequeue_throughput}" != "N/A" ]; then
+            printf "Dequeue Throughput:     %.2f ops/sec\n" ${dequeue_throughput}
+        fi
+        if [ ! -z "${avg_consumer_time}" ] && [ "${avg_consumer_time}" != "N/A" ]; then
+            printf "Avg Consumer Time:      %.6f sec\n" ${avg_consumer_time}
+        fi
+        if [ ! -z "${avg_latency}" ] && [ "${avg_latency}" != "N/A" ]; then
+            printf "Avg Latency:            %.6f ms\n" ${avg_latency}
         fi
         if [ ! -z "${producer_time}" ] && [ "${producer_time}" != "N/A" ]; then
             printf "Producer Phase Time:    %.6f sec\n" ${producer_time}
         fi
         
         echo ""
-        echo -e "${BLUE}Detailed CSV:${NC} ${csv_file}"
-        
-        # Show enhanced summary if it exists
-        enhanced_csv="${SESSION_DIR}/enhanced_summary.csv"
-        if [ -f "${enhanced_csv}" ]; then
-            echo -e "${BLUE}Enhanced Summary:${NC} ${enhanced_csv}"
-        fi
+        echo -e "${BLUE}Results File:${NC} ${csv_file}"
     fi
-else
-    log_error "Microbenchmark failed"
-    exit 1
+    
+    # Show enhanced summary location (always exists now)
+    echo -e "${BLUE}Enhanced Summary:${NC} ${SESSION_DIR}/enhanced_summary.csv"
+    if [ $REPEAT -gt 1 ]; then
+        echo -e "${BLUE}  (Contains all ${SUCCESS_COUNT} runs)${NC}"
+    fi
+    
+    # Show individual run details if multiple runs
+    if [ $REPEAT -gt 1 ]; then
+        echo ""
+        echo -e "${BLUE}Individual Run Details:${NC}"
+        for ((run=1; run<=REPEAT; run++)); do
+            run_csv="${SESSION_DIR}/microbench_${SPMC_NAME}_${NUM_CONSUMERS}consumers_${OPS_PER_CONSUMER}ops_run${run}.csv"
+            if [ -f "$run_csv" ]; then
+                echo "  Run ${run}: ${run_csv}"
+            fi
+        done
+    fi
 fi
 
 echo ""
