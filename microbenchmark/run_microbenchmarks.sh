@@ -709,30 +709,53 @@ if [ -f "${csv_file}" ]; then
         log_info "Calculating statistics across ${SUCCESS_COUNT} successful runs..."
         
         # Extract metrics from CSV (skip header)
-        local producer_times=$(tail -n +2 "$csv_file" | cut -d',' -f7)
-        local enqueue_throughputs=$(tail -n +2 "$csv_file" | cut -d',' -f8)
-        local avg_consumer_times=$(tail -n +2 "$csv_file" | cut -d',' -f9)
-        local dequeue_throughputs=$(tail -n +2 "$csv_file" | cut -d',' -f12)
-        local latencies=$(tail -n +2 "$csv_file" | cut -d',' -f13)
+        producer_times=$(tail -n +2 "$csv_file" | cut -d',' -f7)
+        enqueue_throughputs=$(tail -n +2 "$csv_file" | cut -d',' -f8)
+        avg_consumer_times=$(tail -n +2 "$csv_file" | cut -d',' -f9)
+        dequeue_throughputs=$(tail -n +2 "$csv_file" | cut -d',' -f12)
+        latencies=$(tail -n +2 "$csv_file" | cut -d',' -f13)
         
         # Calculate mean and std dev for each metric
         calc_stats() {
             local values="$1"
+            
+            # Filter out empty lines and invalid values
+            values=$(echo "$values" | grep -v '^$' | grep -E '^[0-9]+\.?[0-9]*$')
+            
+            if [ -z "$values" ]; then
+                echo "0.0 0.0"
+                return
+            fi
+            
             local count=$(echo "$values" | wc -l)
-            local sum=$(echo "$values" | awk '{sum+=$1} END {print sum}')
-            local mean=$(echo "scale=6; $sum / $count" | bc)
             
-            local variance=0
-            while IFS= read -r val; do
-                local diff=$(echo "scale=6; $val - $mean" | bc)
-                local sq=$(echo "scale=6; $diff * $diff" | bc)
-                variance=$(echo "scale=6; $variance + $sq" | bc)
-            done <<< "$values"
+            # Use awk for all calculations to avoid bc syntax errors
+            local stats=$(echo "$values" | awk '
+            {
+                sum += $1
+                values[NR] = $1
+                count = NR
+            }
+            END {
+                if (count == 0) {
+                    print "0.0 0.0"
+                } else {
+                    mean = sum / count
+                    
+                    # Calculate variance
+                    variance = 0
+                    for (i = 1; i <= count; i++) {
+                        diff = values[i] - mean
+                        variance += diff * diff
+                    }
+                    variance = variance / count
+                    stddev = sqrt(variance)
+                    
+                    printf "%.6f %.6f", mean, stddev
+                }
+            }')
             
-            variance=$(echo "scale=6; $variance / $count" | bc)
-            local stddev=$(echo "scale=6; sqrt($variance)" | bc)
-            
-            echo "$mean $stddev"
+            echo "$stats"
         }
         
         read producer_mean producer_std <<< $(calc_stats "$producer_times")
@@ -761,11 +784,11 @@ if [ -f "${csv_file}" ]; then
     else
         # Single run - show individual metrics
         # Extract key metrics from CSV
-        local producer_time=$(tail -n +2 "${csv_file}" | cut -d',' -f7)
-        local enqueue_throughput=$(tail -n +2 "${csv_file}" | cut -d',' -f8)
-        local avg_consumer_time=$(tail -n +2 "${csv_file}" | cut -d',' -f9)
-        local dequeue_throughput=$(tail -n +2 "${csv_file}" | cut -d',' -f12)
-        local avg_latency=$(tail -n +2 "${csv_file}" | cut -d',' -f13)
+        producer_time=$(tail -n +2 "${csv_file}" | cut -d',' -f7)
+        enqueue_throughput=$(tail -n +2 "${csv_file}" | cut -d',' -f8)
+        avg_consumer_time=$(tail -n +2 "${csv_file}" | cut -d',' -f9)
+        dequeue_throughput=$(tail -n +2 "${csv_file}" | cut -d',' -f12)
+        avg_latency=$(tail -n +2 "${csv_file}" | cut -d',' -f13)
         
         if [ ! -z "${enqueue_throughput}" ] && [ "${enqueue_throughput}" != "N/A" ]; then
             printf "Enqueue Throughput:     %.2f ops/sec\n" ${enqueue_throughput}
