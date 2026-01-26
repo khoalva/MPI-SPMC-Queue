@@ -577,21 +577,33 @@ size_t spmc_queue_get_capacity_bytes(const spmc_queue_t *queue) {
     
     size_t total_size = 0;
     
-    // Base structure sizes
-    total_size += sizeof(producer_t);
-    total_size += sizeof(consumer_t); 
+    // Structure size
     total_size += sizeof(structure_t);
     
+    // Only count shared queue memory (on queue owner)
     if (spmc_queue_is_enqueuer((spmc_queue_t*)queue)) {
         // Items array
         total_size += MAX_QUEUE_SIZE * sizeof(cell_t);
         
-        // Heads array (one per consumer)
-        int num_consumers = mpi_get_size(&queue->mpi_ctx) - 1;
-        total_size += num_consumers * sizeof(int);
+        // Heads array 
+
+        total_size += MAX_ROW * sizeof(int);
         
-        // TODO: Add bitmap sizes when implemented
-        // total_size += bitmap_memory_size(queue->q->rows, queue->q->cols) * 3; // 3 bitmaps
+        // Bitmap sizes
+        if (queue->q->bitmap) {
+            // Each bitmap: rows * words_per_row * sizeof(uint64_t)
+            size_t bitmap_size = queue->q->bitmap->rows * 
+                                queue->q->bitmap->words_per_row * 
+                                sizeof(uint64_t);
+            
+            // Main bitmap (queue->q->bitmap)
+            total_size += bitmap_size;
+            total_size += sizeof(bitmap_t);
+            
+            // Sync bitmap (queue->q->sync_bitmap) - same size as main bitmap
+            total_size += bitmap_size;
+            total_size += sizeof(bitmap_t);
+        }
     }
     
     return total_size;

@@ -23,7 +23,7 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SESSION_DIR="${RESULTS_DIR}/session_${TIMESTAMP}"
 
 # Default parameters
-OPS_PER_CONSUMER=10000  # Default operations per consumer for reliable measurements
+OPS_PER_CONSUMER=5000  # Reduced for 64+ processes to avoid timeout
 NUM_PROCESSES=5  # Default: 1 producer + 4 consumers
 MPI_HOSTS=""
 SPMC_PATH=""
