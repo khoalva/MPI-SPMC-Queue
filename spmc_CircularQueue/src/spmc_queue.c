@@ -264,9 +264,8 @@ int spmc_queue_is_enqueuer(spmc_queue_t *queue) {
  * @brief Returns the batch size for dequeue operations.
  */
 int spmc_queue_get_batch_size(spmc_queue_t *queue) {
-    (void)queue; // Unused parameter
     // Circular Queue supports batch dequeue
-    return 100; // Can be adjusted based on workload
+    return 1; // Can be adjusted based on workload
 }
 
 /**
