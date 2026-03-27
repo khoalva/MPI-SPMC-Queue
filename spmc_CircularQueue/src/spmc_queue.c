@@ -176,71 +176,75 @@ int spmc_queue_enqueue(spmc_queue_t *queue, int value) {
  * @return Number of items dequeued (0 to max_count)
  */
 int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count) {
-    if (!out_data || max_count <= 0) return 0;
-    
+    if (!queue || !out_data || max_count <= 0) return 0;
+
+    int count = max_count;          // keep general; user says max_count is set to 1 in benchmark
     int backoff_time = BACKOFF_MIN_US;
-    
-    // Fetch and increment head atomically by max_count
-    int old_head;
-    MPI_TRY(mpi_fetch_and_op(&max_count, &old_head, MPI_INT, 0, 0, MPI_SUM, &queue->win_head));
-    
-    int new_head = old_head + max_count;
-    
-    // Check if queue has items: (new_head > tail_buf)
+
+    // 1) Reserve 'count' slots by atomically advancing head
+    int old_head = 0;
+    MPI_TRY(mpi_fetch_and_op(&count, &old_head, MPI_INT, 0, 0, MPI_SUM, &queue->win_head));
+    int new_head = old_head + count;
+
+    // 2) Ensure producers have committed at least 'count' items:
+    //    We must not read beyond reserved_tail.
     if (new_head > queue->tail_buf) {
-        // Update tail_buf by reading reserved_tail
         int no_op = 0;
-        MPI_TRY(mpi_fetch_and_op(&no_op, &queue->tail_buf, MPI_INT, 0, 0, MPI_NO_OP, &queue->win_reserved_tail));
-        
-        // Check again after update
+        MPI_TRY(mpi_fetch_and_op(&no_op, &queue->tail_buf, MPI_INT,
+                                 0, 0, MPI_NO_OP, &queue->win_reserved_tail));
+
         if (new_head > queue->tail_buf) {
-            // Queue doesn't have enough items, rollback head
-            int rollback = -max_count;
-            MPI_TRY(mpi_fetch_and_op(&rollback, &old_head, MPI_INT, 0, 0, MPI_SUM, &queue->win_head));
+            // Not enough committed items; rollback head reservation and fail.
+            int rollback = -count;
+            int ignored = 0;
+            MPI_TRY(mpi_fetch_and_op(&rollback, &ignored, MPI_INT, 0, 0, MPI_SUM, &queue->win_head));
             return 0;
         }
     }
-    
-    // Calculate position in circular buffer
+
+    // 3) Read data from the circular buffer (handle wrap-around)
     int pos = old_head % queue->size;
-    
-    // Read data from circular buffer - handle wraparound
-    if (pos + max_count <= queue->size) {
-        // One contiguous read - no wraparound
-        MPI_Aint data_disp = pos * sizeof(int);
-        MPI_TRY(mpi_get(out_data, max_count * sizeof(int), MPI_BYTE, 0, data_disp, &queue->win_data));
+
+    if (pos + count <= queue->size) {
+        MPI_Aint data_disp = (MPI_Aint)pos * (MPI_Aint)sizeof(int);
+        MPI_TRY(mpi_get(out_data, count * (int)sizeof(int), MPI_BYTE,
+                        0, data_disp, &queue->win_data));
     } else {
-        // Split read - wraparound case
         int first_get_nelem = queue->size - pos;
-        MPI_Aint data_disp = pos * sizeof(int);
-        
-        // First part: from pos to end of buffer
-        MPI_TRY(mpi_get(out_data, first_get_nelem * sizeof(int), MPI_BYTE, 0, data_disp, &queue->win_data));
-        
-        // Second part: from start of buffer
-        MPI_TRY(mpi_get(out_data + first_get_nelem, (max_count - first_get_nelem) * sizeof(int), 
-                        MPI_BYTE, 0, 0, &queue->win_data));
+
+        MPI_Aint disp1 = (MPI_Aint)pos * (MPI_Aint)sizeof(int);
+        MPI_TRY(mpi_get(out_data, first_get_nelem * (int)sizeof(int), MPI_BYTE,
+                        0, disp1, &queue->win_data));
+
+        MPI_Aint disp2 = 0;
+        MPI_TRY(mpi_get(out_data + first_get_nelem,
+                        (count - first_get_nelem) * (int)sizeof(int), MPI_BYTE,
+                        0, disp2, &queue->win_data));
     }
-    
-    // Flush to ensure data is read
+
+    // Ensure the GETs are locally complete/visible before we "commit" the pop.
     MPI_TRY(MPI_Win_flush(0, queue->win_data.window));
-    
-    // Update reserved_head using compare-and-swap in a loop until successful
+
+    // 4) Commit pop in-order: reserved_head must advance from old_head -> new_head
+    //    This may spin until earlier pops commit.
     int expected = old_head;
-    int desired = old_head + max_count;
-    int result;
-    
-    do {
-        MPI_TRY(mpi_compare_and_swap(&desired, &expected, &result, MPI_INT, 0, 0, &queue->win_reserved_head));
-        
-        if (result != expected) {
-            // CAS failed, backoff and retry
-            backoff(&backoff_time);
-            expected = old_head; // Reset expected value
+    int desired  = new_head;
+    int result   = 0;
+
+    for (;;) {
+        MPI_TRY(mpi_compare_and_swap(&desired, &expected, &result, MPI_INT,
+                                     0, 0, &queue->win_reserved_head));
+
+        if (result == expected) {
+            // CAS succeeded; pop is committed
+            break;
         }
-    } while (result != old_head);
-    
-    return max_count;
+
+        backoff(&backoff_time);
+        // expected stays old_head: we are waiting for reserved_head to reach our old_head.
+    }
+
+    return count;
 }
 
 /**
