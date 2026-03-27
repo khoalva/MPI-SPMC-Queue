@@ -23,12 +23,12 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SESSION_DIR="${RESULTS_DIR}/session_${TIMESTAMP}"
 
 # Default parameters
-OPS_PER_CONSUMER=5000  # Reduced for 64+ processes to avoid timeout
+OPS_PER_CONSUMER=100  # Reduced for 64+ processes to avoid timeout
 NUM_PROCESSES=5  # Default: 1 producer + 4 consumers
 MPI_HOSTS=""
 SPMC_PATH=""
 VERBOSE=false
-TIMEOUT=30  # Default timeout: 30 seconds
+TIMEOUT=120  # Default timeout: 120 seconds
 REPEAT=1  # Number of times to repeat the benchmark
 RUN_ALL=false  # Run benchmarks on all available queue implementations 
 
@@ -41,7 +41,7 @@ usage() {
     echo -e "${BLUE}Usage:${NC} $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  -o OPS        Operations per consumer (default: 10000)"
+    echo "  -o OPS        Operations per consumer (default: 100)"
     echo "  -p PROCS      Total number of MPI processes (default: 5 = 1 producer + 4 consumers)"
     echo "  -H HOSTS      Comma-separated list of MPI hosts/nodes"
     echo "                Example: -H node1,node2,node3"
