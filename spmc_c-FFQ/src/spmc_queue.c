@@ -539,7 +539,35 @@ size_t spmc_queue_get_capacity_bytes(spmc_queue_t *queue) {
     return 0;
 }
 
-int spmc_queue_get_batch_size(spmc_queue_t *queue) {
+/**
+ * @brief Separate batch-size queries for producer and consumer sides.
+ */
+int spmc_queue_get_enq_batch_size(spmc_queue_t *queue) {
+    (void)queue;
+    return 1;  /* c-FFQ preferred enqueue 1 item at a time */
+}
 
-    return BATCH_SIZE; // Default batch size for bdFFQ
+int spmc_queue_get_deq_batch_size(spmc_queue_t *queue) {
+    (void)queue;
+    return BATCH_SIZE;  /* c-FFQ preferred dequeue batch size */
+}
+
+/* Legacy alias */
+int spmc_queue_get_batch_size(spmc_queue_t *queue) {
+    return spmc_queue_get_enq_batch_size(queue);
+}
+
+/**
+ * Batch enqueue: enqueues 'count' items from the 'values' array.
+ * c-FFQ has a native batch enqueue path (spmc_queue_enqueue_batch_internal),
+ * but falls back to a loop over single enqueue for simplicity here.
+ */
+int spmc_queue_enqueue_batch(spmc_queue_t *queue, int *values, int count) {
+    if (!values || count <= 0) return -1;
+    for (int i = 0; i < count; i++) {
+        if (spmc_queue_enqueue(queue, values[i]) != 0) {
+            return -1;
+        }
+    }
+    return 0;
 }

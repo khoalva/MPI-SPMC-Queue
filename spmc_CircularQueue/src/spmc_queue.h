@@ -31,6 +31,7 @@ typedef struct {
 int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]);
 void spmc_queue_destroy(spmc_queue_t *queue);
 int spmc_queue_enqueue(spmc_queue_t *queue, int value);
+int spmc_queue_enqueue_batch(spmc_queue_t *queue, int *values, int count);
 int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count);
 void spmc_queue_print_stats(spmc_queue_t *queue);
 int spmc_queue_is_enqueuer(spmc_queue_t *queue);

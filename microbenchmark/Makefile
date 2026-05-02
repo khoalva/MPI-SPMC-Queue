@@ -1,7 +1,8 @@
 # Makefile for Micro Benchmark Library
 # Proper micro benchmarking for SPMC Queue with fixed operations
 
-CC = mpicc
+CC  = mpicc
+CXX = mpic++
 CFLAGS = -O2 -Wall -Wextra -std=c99 -fPIC
 LDFLAGS = -lm
 
@@ -47,7 +48,9 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c $(HEADERS)
 	$(CC) $(CFLAGS) -I$(INCDIR) -c $< -o $@
 
 # Examples
-examples: spmc_microbenchmark
+examples: spmc_microbenchmark spmc_bdFFQ_microbenchmark \
+          spmc_DavidQueue_microbenchmark spmc_dFFQ_microbenchmark \
+          spmc_cFFQ_microbenchmark
 
 spmc_microbenchmark: $(EXAMPLEDIR)/spmc_microbenchmark.c $(STATIC_LIB)
 	$(CC) $(CFLAGS) -I$(INCDIR) -I../spmc_BBQ/src -I../mpi_lib/include \
@@ -56,6 +59,50 @@ spmc_microbenchmark: $(EXAMPLEDIR)/spmc_microbenchmark.c $(STATIC_LIB)
 		$(LIBDIR)/$(STATIC_LIB) ../mpi_lib/lib/libmpi_wrapper.a \
 		-lm -o $(EXAMPLEDIR)/spmc_microbenchmark
 	@echo "Built micro benchmark example: $(EXAMPLEDIR)/spmc_microbenchmark"
+
+# Batch dFFQ variant — now pure C99, compiled with mpicc (same as all other queues)
+spmc_bdFFQ_microbenchmark: $(EXAMPLEDIR)/spmc_microbenchmark.c $(STATIC_LIB) ../spmc_bdFFQ/build/spmc_queue.o
+	$(CC) $(CFLAGS) -I$(INCDIR) -I../spmc_bdFFQ/src -I../mpi_lib/include \
+		$(EXAMPLEDIR)/spmc_microbenchmark.c ../spmc_bdFFQ/build/spmc_queue.o \
+		$(LIBDIR)/$(STATIC_LIB) ../mpi_lib/lib/libmpi_wrapper.a \
+		-lm -o $(EXAMPLEDIR)/spmc_bdFFQ_microbenchmark
+	@echo "Built Batch dFFQ micro benchmark: $(EXAMPLEDIR)/spmc_bdFFQ_microbenchmark"
+
+../spmc_bdFFQ/build/spmc_queue.o:
+	$(MAKE) -C ../spmc_bdFFQ all
+
+# DavidQueue variant
+spmc_DavidQueue_microbenchmark: $(EXAMPLEDIR)/spmc_microbenchmark.c $(STATIC_LIB) ../spmc_DavidQueue/build/spmc_queue.o
+	$(CC) $(CFLAGS) -I$(INCDIR) -I../spmc_DavidQueue/src -I../mpi_lib/include \
+		$(EXAMPLEDIR)/spmc_microbenchmark.c ../spmc_DavidQueue/build/spmc_queue.o \
+		$(LIBDIR)/$(STATIC_LIB) ../mpi_lib/lib/libmpi_wrapper.a \
+		-lm -o $(EXAMPLEDIR)/spmc_DavidQueue_microbenchmark
+	@echo "Built DavidQueue micro benchmark: $(EXAMPLEDIR)/spmc_DavidQueue_microbenchmark"
+
+../spmc_DavidQueue/build/spmc_queue.o:
+	$(MAKE) -C ../spmc_DavidQueue all
+
+# dFFQ (non-batch) variant
+spmc_dFFQ_microbenchmark: $(EXAMPLEDIR)/spmc_microbenchmark.c $(STATIC_LIB) ../spmc_dFFQ/build/spmc_queue.o
+	$(CC) $(CFLAGS) -I$(INCDIR) -I../spmc_dFFQ/src -I../mpi_lib/include \
+		$(EXAMPLEDIR)/spmc_microbenchmark.c ../spmc_dFFQ/build/spmc_queue.o \
+		$(LIBDIR)/$(STATIC_LIB) ../mpi_lib/lib/libmpi_wrapper.a \
+		-lm -o $(EXAMPLEDIR)/spmc_dFFQ_microbenchmark
+	@echo "Built dFFQ micro benchmark: $(EXAMPLEDIR)/spmc_dFFQ_microbenchmark"
+
+../spmc_dFFQ/build/spmc_queue.o:
+	$(MAKE) -C ../spmc_dFFQ all
+
+# c-FFQ variant
+spmc_cFFQ_microbenchmark: $(EXAMPLEDIR)/spmc_microbenchmark.c $(STATIC_LIB) ../spmc_c-FFQ/build/spmc_queue.o
+	$(CC) $(CFLAGS) -I$(INCDIR) -I../spmc_c-FFQ/src -I../mpi_lib/include \
+		$(EXAMPLEDIR)/spmc_microbenchmark.c ../spmc_c-FFQ/build/spmc_queue.o \
+		$(LIBDIR)/$(STATIC_LIB) ../mpi_lib/lib/libmpi_wrapper.a \
+		-lm -o $(EXAMPLEDIR)/spmc_cFFQ_microbenchmark
+	@echo "Built c-FFQ micro benchmark: $(EXAMPLEDIR)/spmc_cFFQ_microbenchmark"
+
+../spmc_c-FFQ/build/spmc_queue.o:
+	$(MAKE) -C ../spmc_c-FFQ all
 
 # Test targets
 test: test-micro
@@ -76,6 +123,10 @@ test-micro-large: spmc_microbenchmark
 clean:
 	rm -f $(OBJDIR)/*.o
 	rm -f $(EXAMPLEDIR)/spmc_microbenchmark
+	rm -f $(EXAMPLEDIR)/spmc_bdFFQ_microbenchmark
+	rm -f $(EXAMPLEDIR)/spmc_DavidQueue_microbenchmark
+	rm -f $(EXAMPLEDIR)/spmc_dFFQ_microbenchmark
+	rm -f $(EXAMPLEDIR)/spmc_cFFQ_microbenchmark
 	rm -f *.csv
 	rm -f $(EXAMPLEDIR)/*.csv
 
@@ -124,4 +175,5 @@ debug: all
 optimize: CFLAGS += -O3 -march=native -DNDEBUG
 optimize: all
 
-.PHONY: all directories examples test test-micro test-micro-small test-micro-large clean clean-all install uninstall help debug optimize
+.PHONY: all directories examples test test-micro test-micro-small test-micro-large clean clean-all install uninstall help debug optimize \
+        spmc_bdFFQ_microbenchmark spmc_DavidQueue_microbenchmark spmc_dFFQ_microbenchmark spmc_cFFQ_microbenchmark

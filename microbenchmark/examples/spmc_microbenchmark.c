@@ -29,10 +29,58 @@
  *   (1 producer + 4 consumers, each consumer does 10000 dequeues)
  */
 
-// Wrapper functions for queue operations
+// Wrapper functions for queue operations — single enqueue (kept as fallback reference)
+__attribute__((unused))
 static int enqueue_wrapper(void *queue, int value) {
     return spmc_queue_enqueue((spmc_queue_t *)queue, value);
 }
+
+// -----------------------------------------------------------------------
+// Batch enqueue buffer — mirrors the batch dequeue buffer pattern exactly
+// -----------------------------------------------------------------------
+static int *enqueue_buffer = NULL;
+static int enqueue_buffer_size = 0;
+static int enqueue_buffer_index = 0;  // Number of items currently buffered
+
+// Flush any remaining items in the enqueue buffer (call after each phase)
+static int enqueue_flush_buffer(spmc_queue_t *q) {
+    if (enqueue_buffer_index == 0) return 0;
+    int result = spmc_queue_enqueue_batch(q, enqueue_buffer, enqueue_buffer_index);
+    enqueue_buffer_index = 0;
+    return result;
+}
+
+// Batch enqueue wrapper — accumulates items in a local buffer, then
+// calls spmc_queue_enqueue_batch() when the buffer is full.
+// For queues with enq_batch_size=1 (e.g. BBQ), this flushes every call
+// and behaves identically to the old single enqueue wrapper.
+static int enqueue_batch_wrapper(void *queue, int value) {
+    spmc_queue_t *q = (spmc_queue_t *)queue;
+
+    // Initialize buffer on first call using the enqueue-specific batch size
+    if (enqueue_buffer == NULL) {
+        enqueue_buffer_size = spmc_queue_get_enq_batch_size(q);
+        enqueue_buffer = (int*)malloc(enqueue_buffer_size * sizeof(int));
+        if (!enqueue_buffer) {
+            return -1;
+        }
+        enqueue_buffer_index = 0;
+    }
+
+    // Add item to buffer
+    enqueue_buffer[enqueue_buffer_index++] = value;
+
+    // When buffer is full, flush to queue in one batch call
+    if (enqueue_buffer_index >= enqueue_buffer_size) {
+        return enqueue_flush_buffer(q);
+    }
+
+    return 0;  // Buffered successfully, not yet sent
+}
+
+// -----------------------------------------------------------------------
+// Batch dequeue buffer — unchanged from original
+// -----------------------------------------------------------------------
 
 // Global buffer for batch dequeue - allocated per consumer
 static int *dequeue_buffer = NULL;
@@ -45,10 +93,10 @@ static int dequeue_buffer_count = 0;
 static int dequeue_wrapper(void *queue, int *value) {
     spmc_queue_t *q = (spmc_queue_t *)queue;
     
-    // Initialize buffer on first call
+    // Initialize buffer on first call using the dequeue-specific batch size
     if (dequeue_buffer == NULL) {
-        dequeue_buffer_size = spmc_queue_get_batch_size(q);
-        dequeue_buffer = malloc(dequeue_buffer_size * sizeof(int));
+        dequeue_buffer_size = spmc_queue_get_deq_batch_size(q);
+        dequeue_buffer = (int*)malloc(dequeue_buffer_size * sizeof(int));
         if (!dequeue_buffer) {
             return -1;
         }
@@ -70,6 +118,7 @@ static int dequeue_wrapper(void *queue, int *value) {
     *value = dequeue_buffer[dequeue_buffer_index++];
     return 1; // Success - return 1 item
 }
+
 
 static void print_usage(const char *program_name) {
     printf("\nUsage: mpirun -np <N> %s [ops_per_consumer]\n", program_name);
@@ -150,13 +199,15 @@ int main(int argc, char *argv[]) {
     // Phase 1: WARMUP - Producer prefills queue
     // ===================================================================
     if (mpi_rank == 0) {
-        int warmup_result = micro_bench_warmup_phase(&bench_ctx, enqueue_wrapper);
+        int warmup_result = micro_bench_warmup_phase(&bench_ctx, enqueue_batch_wrapper);
         if (warmup_result < 0) {
             fprintf(stderr, "Rank 0: Warmup phase failed\n");
             micro_bench_cleanup(&bench_ctx);
             spmc_queue_destroy(&queue);
             return 1;
         }
+        // Flush any items remaining in the enqueue buffer after warmup
+        enqueue_flush_buffer(&queue);
     }
     
     // Synchronize after warmup - ensure all processes see the prefilled queue
@@ -175,13 +226,15 @@ int main(int argc, char *argv[]) {
     
     if (mpi_rank == 0) {
         // Producer process - enqueue 2N items (measured)
-        int produce_result = micro_bench_producer_phase(&bench_ctx, enqueue_wrapper);
+        int produce_result = micro_bench_producer_phase(&bench_ctx, enqueue_batch_wrapper);
         if (produce_result < 0) {
             fprintf(stderr, "Rank 0: Producer phase failed\n");
             micro_bench_cleanup(&bench_ctx);
             spmc_queue_destroy(&queue);
             return 1;
         }
+        // Flush any items remaining in the enqueue buffer after producer phase
+        enqueue_flush_buffer(&queue);
     } else {
         // Consumer process - dequeue N items (measured)
         int consume_result = micro_bench_consumer_phase(&bench_ctx, dequeue_wrapper);
@@ -243,6 +296,12 @@ int main(int argc, char *argv[]) {
         micro_bench_export_csv_with_memory(&bench_ctx, filename, queue_memory_bytes);
     }
     
+    // Cleanup enqueue buffer
+    if (enqueue_buffer) {
+        free(enqueue_buffer);
+        enqueue_buffer = NULL;
+    }
+
     // Cleanup dequeue buffer
     if (dequeue_buffer) {
         free(dequeue_buffer);

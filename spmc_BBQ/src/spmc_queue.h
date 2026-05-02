@@ -70,9 +70,17 @@ int spmc_queue_init(spmc_queue_t *queue, int argc, char *argv[]);
 int spmc_queue_init_with_queue_owner(spmc_queue_t *queue, int argc, char *argv[], int queue_owner_rank);
 void spmc_queue_destroy(spmc_queue_t *queue);
 int spmc_queue_enqueue(spmc_queue_t *queue, int value);
+int spmc_queue_enqueue_batch(spmc_queue_t *queue, int *values, int count);
 int spmc_queue_dequeue(spmc_queue_t *queue, int *out_data, int max_count);
 void spmc_queue_print_stats(spmc_queue_t *queue);
 int spmc_queue_is_enqueuer(spmc_queue_t *queue);
+
+/* Separate batch-size queries for producer and consumers */
+int spmc_queue_get_enq_batch_size(spmc_queue_t *queue);
+int spmc_queue_get_deq_batch_size(spmc_queue_t *queue);
+
+/* Legacy alias — returns 1 (BBQ does not use batching) */
 int spmc_queue_get_batch_size(spmc_queue_t *queue);
+
 size_t spmc_queue_get_capacity_bytes(const spmc_queue_t *queue);
 #endif

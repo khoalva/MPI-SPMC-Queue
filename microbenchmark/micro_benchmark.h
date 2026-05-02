@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include <mpi.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * Micro Benchmark Library for SPMC Queue Performance Testing
  * 
@@ -209,5 +213,9 @@ void micro_bench_cleanup(micro_bench_ctx_t *ctx);
 #define MICRO_BENCH_CALC_ELAPSED(ctx) \
     ((ctx)->local_end.tv_sec - (ctx)->local_start.tv_sec + \
      ((ctx)->local_end.tv_usec - (ctx)->local_start.tv_usec) / 1000000.0)
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // MICRO_BENCHMARK_H

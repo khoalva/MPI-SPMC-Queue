@@ -567,10 +567,38 @@ int spmc_queue_is_enqueuer(spmc_queue_t *queue) {
     return (mpi_get_rank(&queue->mpi_ctx) == 0);
 }
 
-int spmc_queue_get_batch_size(spmc_queue_t *queue) {
-    // BBQ doesn't support efficient batch dequeue, use single dequeue
-    return 1;
+
+int spmc_queue_get_enq_batch_size(spmc_queue_t *queue) {
+    (void)queue;
+    return 1;  /* BBQ enqueues one item at a time */
 }
+
+int spmc_queue_get_deq_batch_size(spmc_queue_t *queue) {
+    (void)queue;
+    return 1;  /* BBQ dequeues one item at a time */
+}
+
+/* Legacy alias */
+int spmc_queue_get_batch_size(spmc_queue_t *queue) {
+    return spmc_queue_get_enq_batch_size(queue);
+}
+
+/**
+ * Batch enqueue: enqueues 'count' items from the 'values' array.
+ * For queues without native batch support, this is a loop over single enqueue.
+ * Queues with native batch enqueue should override this with an optimized version.
+ * Mirrors the batch dequeue pattern: spmc_queue_dequeue(queue, buffer, max_count).
+ */
+int spmc_queue_enqueue_batch(spmc_queue_t *queue, int *values, int count) {
+    if (!values || count <= 0) return -1;
+    for (int i = 0; i < count; i++) {
+        if (spmc_queue_enqueue(queue, values[i]) != MPI_SUCCESS) {
+            return -1;
+        }
+    }
+    return MPI_SUCCESS;
+}
+
 
 size_t spmc_queue_get_capacity_bytes(const spmc_queue_t *queue) {
     if (!queue) return 0;

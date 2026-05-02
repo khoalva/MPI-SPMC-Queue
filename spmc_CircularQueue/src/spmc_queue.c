@@ -273,6 +273,22 @@ int spmc_queue_get_batch_size(spmc_queue_t *queue) {
 }
 
 /**
+ * Batch enqueue: enqueues 'count' items from the 'values' array.
+ * For queues without native batch support, this is a loop over single enqueue.
+ * Mirrors the batch dequeue pattern: spmc_queue_dequeue(queue, buffer, max_count).
+ */
+int spmc_queue_enqueue_batch(spmc_queue_t *queue, int *values, int count) {
+    if (!values || count <= 0) return -1;
+    for (int i = 0; i < count; i++) {
+        if (spmc_queue_enqueue(queue, values[i]) != MPI_SUCCESS) {
+            return -1;
+        }
+    }
+    return MPI_SUCCESS;
+}
+
+
+/**
  * @brief Returns the total bytes allocated by the queue.
  */
 size_t spmc_queue_get_capacity_bytes(spmc_queue_t *queue) {

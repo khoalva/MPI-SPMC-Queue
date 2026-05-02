@@ -23,7 +23,7 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SESSION_DIR="${RESULTS_DIR}/session_${TIMESTAMP}"
 
 # Default parameters
-OPS_PER_CONSUMER=100  # Reduced for 64+ processes to avoid timeout
+OPS_PER_CONSUMER=1000  # Reduced for 64+ processes to avoid timeout
 NUM_PROCESSES=5  # Default: 1 producer + 4 consumers
 MPI_HOSTS=""
 SPMC_PATH=""
@@ -344,7 +344,7 @@ build_microbenchmark_executable() {
         log_error "SPMC object files not found in: ${spmc_path}"
         return 1
     fi
-    
+
     # Compile the microbenchmark source
     log_info "Compiling microbenchmark source..."
     if ! mpicc -c "${BENCHMARK_DIR}/examples/spmc_microbenchmark.c" \
@@ -355,23 +355,23 @@ build_microbenchmark_executable() {
         log_error "Failed to compile microbenchmark source"
         return 1
     fi
-    
+
     log_success "Compiled microbenchmark object: $benchmark_obj"
-    
+
     # Link the executable - use static library directly
     local micro_bench_lib="${BENCHMARK_DIR}/lib/libmicrobenchmark.a"
     local mpi_wrapper_lib="${WORKSPACE_DIR}/mpi_lib/lib/libmpi_wrapper.a"
-    
+
     if [[ ! -f "$micro_bench_lib" ]]; then
         log_error "Microbenchmark library not found: $micro_bench_lib"
         return 1
     fi
-    
+
     if [[ ! -f "$mpi_wrapper_lib" ]]; then
         log_error "MPI wrapper library not found: $mpi_wrapper_lib"
         return 1
     fi
-    
+
     log_info "Linking microbenchmark executable..."
     if ! mpicc "$benchmark_obj" $spmc_libs \
         "$micro_bench_lib" "$mpi_wrapper_lib" \
