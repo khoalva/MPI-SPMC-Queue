@@ -7,7 +7,7 @@
 // Constants for FFQ algorithm
 #define EMPTY_CELL -1
 #define DEQUEUED_CELL -2
-#define MAX_QUEUE_SIZE 131072
+#define MAX_QUEUE_SIZE 1048576
 #define BATCH_SIZE 32
 #define MAX_DEQUEUE_RETRIES 1
 #define MAX_WAIT_COUNT 1
